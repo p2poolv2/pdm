@@ -1,7 +1,7 @@
 pub enum CurrentScreen {
     Home,
     BitcoinConfig,
-    FileExplorer, 
+    FileExplorer,
     Exiting,
 }
 

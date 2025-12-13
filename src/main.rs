@@ -1,15 +1,15 @@
 mod app;
 mod ui;
 
-use std::io;
 use anyhow::Result;
+use app::{App, CurrentScreen};
 use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use ratatui::{backend::CrosstermBackend, Terminal};
-use app::{App, CurrentScreen};
+use ratatui::{Terminal, backend::CrosstermBackend};
+use std::io;
 
 fn main() -> Result<()> {
     //  Setup Terminal
@@ -35,7 +35,10 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, app: &mut App) -> io::Result<()> {
+fn run_app(
+    terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
+    app: &mut App,
+) -> io::Result<()> {
     loop {
         terminal.draw(|f| ui::ui(f, app))?;
 
@@ -50,7 +53,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, app: &mut
                         }
                     }
                     KeyCode::Down => {
-                        if app.sidebar_index < 1 { 
+                        if app.sidebar_index < 1 {
                             app.sidebar_index += 1;
                             app.toggle_menu();
                         }
