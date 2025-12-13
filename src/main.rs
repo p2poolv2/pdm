@@ -1,8 +1,12 @@
+// SPDX-FileCopyrightText: 2024 PDM Authors
+//
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 mod app;
 mod ui;
 
 use anyhow::Result;
-use app::{App, CurrentScreen};
+use app::App;
 use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind},
     execute,
@@ -42,24 +46,24 @@ fn run_app(
     loop {
         terminal.draw(|f| ui::ui(f, app))?;
 
-        if let Event::Key(key) = event::read()? {
-            if key.kind == KeyEventKind::Press {
-                match key.code {
-                    KeyCode::Char('q') => return Ok(()),
-                    KeyCode::Up => {
-                        if app.sidebar_index > 0 {
-                            app.sidebar_index -= 1;
-                            app.toggle_menu();
-                        }
+        if let Event::Key(key) = event::read()?
+            && key.kind == KeyEventKind::Press
+        {
+            match key.code {
+                KeyCode::Char('q') => return Ok(()),
+                KeyCode::Up => {
+                    if app.sidebar_index > 0 {
+                        app.sidebar_index -= 1;
+                        app.toggle_menu();
                     }
-                    KeyCode::Down => {
-                        if app.sidebar_index < 1 {
-                            app.sidebar_index += 1;
-                            app.toggle_menu();
-                        }
-                    }
-                    _ => {}
                 }
+                KeyCode::Down => {
+                    if app.sidebar_index < 1 {
+                        app.sidebar_index += 1;
+                        app.toggle_menu();
+                    }
+                }
+                _ => {}
             }
         }
     }
