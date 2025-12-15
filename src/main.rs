@@ -5,6 +5,7 @@
 mod app;
 mod config;
 mod ui;
+mod utils;
 
 use anyhow::Result;
 use app::App;

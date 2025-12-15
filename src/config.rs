@@ -5,6 +5,7 @@
 use anyhow::Result;
 use config::{Config, File, FileFormat};
 use std::collections::HashSet;
+use std::fs;
 use std::path::Path;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -31,7 +32,7 @@ pub struct ConfigEntry {
     pub enabled: bool,
 }
 
-fn get_default_schema() -> Vec<ConfigSchema> {
+pub fn get_default_schema() -> Vec<ConfigSchema> {
     vec![
         // Core
         ConfigSchema {
@@ -440,6 +441,52 @@ pub fn parse_config(path: &Path) -> Result<Vec<ConfigEntry>> {
                 value,
                 schema: None,
                 enabled: true,
+pub fn parse_config(path: &Path) -> Result<Vec<ConfigEntry>> {
+    let content = if path.exists() {
+        fs::read_to_string(path)?
+    } else {
+        String::new()
+    };
+
+    let schema_list = get_default_schema();
+
+    let mut entries = Vec::new();
+    let mut found_keys = std::collections::HashSet::new();
+
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        let parts: Vec<&str> = line.splitn(2, '=').collect();
+        let key = parts[0].trim().to_string();
+        let value = if parts.len() > 1 {
+            parts[1].trim().to_string()
+        } else {
+            "1".to_string()
+        };
+
+        let schema = schema_list.iter().find(|s| s.key == key).cloned();
+        if schema.is_some() {
+            found_keys.insert(key.clone());
+        }
+
+        entries.push(ConfigEntry {
+            key,
+            value,
+            schema,
+            enabled: true,
+        });
+    }
+
+    for schema in schema_list {
+        if !found_keys.contains(&schema.key) {
+            entries.push(ConfigEntry {
+                key: schema.key.clone(),
+                value: schema.default.clone(),
+                schema: Some(schema),
+                enabled: false,
             });
         }
     }
