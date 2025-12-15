@@ -1,0 +1,16 @@
+= P2Poolv2 Deployment and Management Tool
+
+image:https://github.com/p2poolv2/pdm/actions/workflows/ci.yml/badge.svg[Rust CI, link=https://github.com/p2poolv2/pdm/actions/workflows/ci.yml]
+image:https://codecov.io/gh/p2poolv2/pdm/graph/badge.svg?token=Luv6jNbl5f[Codecov, link=https://codecov.io/gh/p2poolv2/pdm]
+
+
+The goal of this repo is to provide a TUI for configuring and managing
+bitcoin node, p2poolv2 node, a lightning node and a P2Poolv2 share
+marketplace.
+
+The wireframes we are building are available on the https://github.com/p2poolv2/p2poolv2/wiki/P2Poolv2-Mining-TUI[p2poolv2 wiki].
+
+Currently we don't have binary releases available. You can run the
+tool locally using just.
+
+`just run`
