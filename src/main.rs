@@ -12,7 +12,7 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use ratatui::{Terminal, backend::CrosstermBackend};
+use ratatui::{Terminal, backend::Backend, backend::CrosstermBackend};
 use std::io;
 
 fn main() -> Result<()> {
@@ -25,7 +25,7 @@ fn main() -> Result<()> {
 
     //  Run App
     let mut app = App::new();
-    let res = run_app(&mut terminal, &mut app);
+    let res = run_app(&mut terminal, &mut app, event::read);
 
     //  Restore Terminal
     disable_raw_mode()?;
@@ -39,14 +39,20 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn run_app(
-    terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
+// Accept any Backend and an Event Provider Closure
+fn run_app<B: Backend, F>(
+    terminal: &mut Terminal<B>,
     app: &mut App,
-) -> io::Result<()> {
+    mut event_provider: F,
+) -> io::Result<()>
+where
+    F: FnMut() -> io::Result<Event>,
+{
     loop {
         terminal.draw(|f| ui::ui(f, app))?;
 
-        if let Event::Key(key) = event::read()?
+        // We check the event from our provider
+        if let Event::Key(key) = event_provider()?
             && key.kind == KeyEventKind::Press
         {
             match key.code {
@@ -66,5 +72,53 @@ fn run_app(
                 _ => {}
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{KeyEvent, KeyEventState, KeyModifiers};
+    use ratatui::backend::TestBackend;
+
+    #[test]
+    fn test_app_integration_smoke_test() {
+        let backend = TestBackend::new(80, 25);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::new();
+
+        let mut step = 0;
+
+        let event_provider = || {
+            step += 1;
+            match step {
+                1 => Ok(Event::Key(KeyEvent {
+                    code: KeyCode::Down,
+                    modifiers: KeyModifiers::empty(),
+                    kind: KeyEventKind::Press,
+                    state: KeyEventState::empty(),
+                })),
+                2 => Ok(Event::Key(KeyEvent {
+                    code: KeyCode::Char('q'),
+                    modifiers: KeyModifiers::empty(),
+                    kind: KeyEventKind::Press,
+                    state: KeyEventState::empty(),
+                })),
+                _ => panic!("Should have exited"),
+            }
+        };
+
+        // First frame
+        terminal.draw(|f| ui::ui(f, &mut app)).unwrap();
+        insta::assert_debug_snapshot!("home_screen", terminal.backend());
+
+        // Run app (process events + redraws)
+        let res = run_app(&mut terminal, &mut app, event_provider);
+        assert!(res.is_ok());
+
+        // Final frame after DOWN
+        insta::assert_debug_snapshot!("menu_toggled", terminal.backend());
+
+        assert_eq!(app.sidebar_index, 1);
     }
 }
