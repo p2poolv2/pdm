@@ -1,0 +1,49 @@
+---
+source: tests/ui_snapshots.rs
+expression: terminal.backend()
+---
+TestBackend {
+    buffer: Buffer {
+        area: Rect { x: 0, y: 0, width: 80, height: 25 },
+        content: [
+            "┌ PDM ──────────────────┐┌ Bitcoin Config ─────────────────────────────────────┐",
+            "│Home                   ││[ Load Bitcoin Config ]                              │",
+            "│Bitcoin Config         ││                                                     │",
+            "│                       ││                                                     │",
+            "│                       ││                                                     │",
+            "│                       ││                                                     │",
+            "│                       ││                                                     │",
+            "│                       ││                                                     │",
+            "│                       ││                                                     │",
+            "│                       ││                                                     │",
+            "│                       ││                                                     │",
+            "│                       ││                                                     │",
+            "│                       ││                                                     │",
+            "│                       ││                                                     │",
+            "│                       ││                                                     │",
+            "│                       ││                                                     │",
+            "│                       ││                                                     │",
+            "│                       ││                                                     │",
+            "│                       ││                                                     │",
+            "│                       ││                                                     │",
+            "│                       ││                                                     │",
+            "│                       ││                                                     │",
+            "│                       ││                                                     │",
+            "│                       ││                                                     │",
+            "└───────────────────────┘└─────────────────────────────────────────────────────┘",
+        ],
+        styles: [
+            x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+            x: 1, y: 2, fg: Black, bg: Gray, underline: Reset, modifier: NONE,
+            x: 24, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        ]
+    },
+    scrollback: Buffer {
+        area: Rect { x: 0, y: 0, width: 80, height: 0 }
+    },
+    cursor: false,
+    pos: (
+        0,
+        0,
+    ),
+}
