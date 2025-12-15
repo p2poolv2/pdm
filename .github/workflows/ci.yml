@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: [ "main" ]
   pull_request:
-    branches: [ "main", "master" ]
+    branches: [ "main" ]
 
 env:
   CARGO_TERM_COLOR: always
@@ -36,6 +36,7 @@ jobs:
 
     - name: Run Clippy
       run: cargo clippy --all-targets -- -D warnings
+
     - name: Run Tests
       # This will fail if the generated snapshots don't match the committed snapshots
       run: cargo test
