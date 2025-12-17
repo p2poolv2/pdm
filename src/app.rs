@@ -2,6 +2,10 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+use crate::components::file_explorer::FileExplorer;
+use std::path::PathBuf;
+
+#[derive(Debug, PartialEq, Eq)]
 pub enum CurrentScreen {
     Home,
     BitcoinConfig,
@@ -12,6 +16,8 @@ pub enum CurrentScreen {
 pub struct App {
     pub current_screen: CurrentScreen,
     pub sidebar_index: usize,
+    pub bitcoin_conf_path: Option<PathBuf>,
+    pub explorer: FileExplorer,
 }
 
 impl App {
@@ -19,6 +25,8 @@ impl App {
         App {
             current_screen: CurrentScreen::Home,
             sidebar_index: 0,
+            bitcoin_conf_path: None,
+            explorer: FileExplorer::new(),
         }
     }
 

@@ -7,7 +7,7 @@ TestBackend {
         area: Rect { x: 0, y: 0, width: 80, height: 25 },
         content: [
             "┌ PDM ──────────────────┐┌ Bitcoin Config ─────────────────────────────────────┐",
-            "│Home                   ││[ Load Bitcoin Config ]                              │",
+            "│Home                   ││Press [Enter] to select a bitcoin.conf file...       │",
             "│Bitcoin Config         ││                                                     │",
             "│                       ││                                                     │",
             "│                       ││                                                     │",

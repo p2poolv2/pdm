@@ -8,10 +8,10 @@ TestBackend {
         content: [
             "┌ PDM ──────────────────┐┌ Home ───────────────────────────────────────────────┐",
             "│Home                   ││Welcome to PDM.                                      │",
-            "│Bitcoin Config         ││Press 'q' to quit.                                   │",
+            "│Bitcoin Config         ││                                                     │",
+            "│                       ││No config loaded                                     │",
             "│                       ││                                                     │",
-            "│                       ││                                                     │",
-            "│                       ││                                                     │",
+            "│                       ││(Navigate to 'Bitcoin Config' to load)               │",
             "│                       ││                                                     │",
             "│                       ││                                                     │",
             "│                       ││                                                     │",

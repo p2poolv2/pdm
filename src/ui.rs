@@ -5,7 +5,7 @@
 use crate::app::{App, CurrentScreen};
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
 };
 
 pub fn ui(f: &mut Frame, app: &mut App) {
@@ -35,19 +35,60 @@ pub fn ui(f: &mut Frame, app: &mut App) {
 
     match app.current_screen {
         CurrentScreen::Home => {
-            let p = Paragraph::new("Welcome to PDM.\nPress 'q' to quit.")
-                .block(Block::default().borders(Borders::ALL).title(" Home "));
+            let config_status = match &app.bitcoin_conf_path {
+                Some(p) => format!("Loaded: {:?}", p),
+                None => "No config loaded".to_string(),
+            };
+
+            let text = format!(
+                "Welcome to PDM.\n\n{}\n\n(Navigate to 'Bitcoin Config' to load)",
+                config_status
+            );
+            let p = Paragraph::new(text)
+                .block(Block::default().borders(Borders::ALL).title(" Home "))
+                .wrap(Wrap { trim: true });
             f.render_widget(p, main_area);
         }
         CurrentScreen::BitcoinConfig => {
-            // File Explorer
-            let p = Paragraph::new("[ Load Bitcoin Config ]").block(
+            let p = Paragraph::new("Press [Enter] to select a bitcoin.conf file...").block(
                 Block::default()
                     .borders(Borders::ALL)
                     .title(" Bitcoin Config "),
             );
             f.render_widget(p, main_area);
         }
+        CurrentScreen::FileExplorer => {
+            render_file_explorer(f, app, main_area);
+        }
         _ => {}
     }
+}
+
+fn render_file_explorer(f: &mut Frame, app: &mut App, area: Rect) {
+    let files: Vec<ListItem> = app
+        .explorer
+        .files
+        .iter()
+        .map(|path| {
+            let name = path.file_name().unwrap_or_default().to_string_lossy();
+            let display_name = if path.is_dir() {
+                format!("📁 {}", name)
+            } else {
+                format!("📄 {}", name)
+            };
+            ListItem::new(display_name)
+        })
+        .collect();
+
+    let mut state = ListState::default();
+    state.select(Some(app.explorer.selected_index));
+
+    let title = format!(" Select File (Current: {:?}) ", app.explorer.current_dir);
+
+    let list = List::new(files)
+        .block(Block::default().borders(Borders::ALL).title(title))
+        .highlight_style(Style::default().bg(Color::Blue).fg(Color::White))
+        .highlight_symbol(">> ");
+
+    f.render_stateful_widget(list, area, &mut state);
 }
