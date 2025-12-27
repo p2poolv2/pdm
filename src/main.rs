@@ -2,16 +2,13 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-mod app;
-mod ui;
-
 use anyhow::Result;
-use app::App;
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind},
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
+use pdm::app::App;
 use ratatui::{Terminal, backend::Backend, backend::CrosstermBackend};
 use std::io;
 
@@ -19,7 +16,7 @@ fn main() -> Result<()> {
     //  Setup Terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -29,7 +26,11 @@ fn main() -> Result<()> {
 
     //  Restore Terminal
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    execute!(
+        terminal.backend_mut(),
+        DisableMouseCapture,
+        LeaveAlternateScreen
+    )?;
     terminal.show_cursor()?;
 
     if let Err(err) = res {
@@ -49,28 +50,38 @@ where
     F: FnMut() -> io::Result<Event>,
 {
     loop {
-        terminal.draw(|f| ui::ui(f, app))?;
+        terminal.draw(|f| pdm::ui::ui(f, app))?;
 
-        // We check the event from our provider
-        if let Event::Key(key) = event_provider()?
-            && key.kind == KeyEventKind::Press
-        {
-            match key.code {
+        match event_provider()? {
+            Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
                 KeyCode::Char('q') => return Ok(()),
-                KeyCode::Up => {
+                KeyCode::Up
+                    if matches!(
+                        app.current_screen,
+                        pdm::app::CurrentScreen::Home | pdm::app::CurrentScreen::BitcoinConfig
+                    ) =>
+                {
                     if app.sidebar_index > 0 {
                         app.sidebar_index -= 1;
                         app.toggle_menu();
                     }
                 }
-                KeyCode::Down => {
+                KeyCode::Down
+                    if matches!(
+                        app.current_screen,
+                        pdm::app::CurrentScreen::Home | pdm::app::CurrentScreen::BitcoinConfig
+                    ) =>
+                {
                     if app.sidebar_index < 1 {
                         app.sidebar_index += 1;
                         app.toggle_menu();
                     }
                 }
-                _ => {}
-            }
+
+                _ => app.handle_key_event(key),
+            },
+            Event::Mouse(mouse) => app.handle_mouse_event(mouse),
+            _ => {}
         }
     }
 }
@@ -109,7 +120,7 @@ mod tests {
         };
 
         // First frame
-        terminal.draw(|f| ui::ui(f, &mut app)).unwrap();
+        terminal.draw(|f| pdm::ui::ui(f, &mut app)).unwrap();
         insta::assert_debug_snapshot!("home_screen", terminal.backend());
 
         // Run app (process events + redraws)
