@@ -214,4 +214,39 @@ mod tests {
         assert_eq!(explorer.current_dir, base);
         assert!(!explorer.files.is_empty());
     }
+
+    #[test]
+    fn selecting_directory_enters_directory() {
+        let base = setup_temp_fs();
+        let folder = base.join("folder");
+
+        let mut explorer = FileExplorer {
+            current_dir: base.clone(),
+            files: vec![folder.clone()],
+            selected_index: 0,
+        };
+
+        let result = explorer.select();
+        assert!(result.is_none());
+        assert_eq!(explorer.current_dir, folder);
+    }
+
+    #[test]
+    fn default_constructs_explorer() {
+        let explorer = FileExplorer::default();
+        assert!(!explorer.current_dir.as_os_str().is_empty());
+    }
+
+    #[test]
+    fn previous_decrements_when_not_zero() {
+        let dir = setup_temp_fs();
+        let mut explorer = FileExplorer {
+            current_dir: dir,
+            files: vec![PathBuf::from("a"), PathBuf::from("b"), PathBuf::from("c")],
+            selected_index: 2,
+        };
+
+        explorer.previous();
+        assert_eq!(explorer.selected_index, 1);
+    }
 }
