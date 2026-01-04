@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 use pdm::app::{App, CurrentScreen};
+use pdm::components::p2pool_parser::parse_p2pool_config;
 use pdm::ui;
 
 use anyhow::Result;
@@ -62,12 +63,32 @@ where
                 CurrentScreen::FileExplorer => match key.code {
                     KeyCode::Up => app.explorer.previous(),
                     KeyCode::Down => app.explorer.next(),
-                    KeyCode::Esc => app.toggle_menu(), // Cancel
+                    KeyCode::Esc => {
+                        if let Some(trigger) = app.explorer_trigger {
+                            app.current_screen = trigger;
+                        } else {
+                            app.toggle_menu();
+                        }
+                    } // Cancel
                     KeyCode::Enter => {
-                        if let Some(path) = app.explorer.select() {
-                            // File Selected!
-                            app.bitcoin_conf_path = Some(path);
-                            app.toggle_menu(); // Go back to main screen
+                        if let Some(path) = app.explorer.select().filter(|p| p.is_file()) {
+                            if let Some(trigger) = app.explorer_trigger {
+                                match trigger {
+                                    CurrentScreen::P2PoolConfig => {
+                                        app.p2pool_conf_path = Some(path.clone());
+                                        if let Ok(sections) = parse_p2pool_config(&path) {
+                                            app.p2pool_editor.load_data(sections);
+                                        }
+                                        app.current_screen = CurrentScreen::P2PoolConfig;
+                                    }
+                                    CurrentScreen::BitcoinConfig => {
+                                        app.bitcoin_conf_path = Some(path);
+                                        app.current_screen = CurrentScreen::BitcoinConfig;
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            app.explorer_trigger = None;
                         }
                     }
                     _ => {}
@@ -75,6 +96,45 @@ where
 
                 // Standard Navigation
                 _ => match key.code {
+                    KeyCode::Enter => {
+                        if app.current_screen == CurrentScreen::BitcoinConfig
+                            || app.current_screen == CurrentScreen::P2PoolConfig
+                        {
+                            app.explorer_trigger = Some(app.current_screen);
+                            app.current_screen = CurrentScreen::FileExplorer;
+                        }
+                    }
+
+                    // P2POOL EDITOR KEYS
+                    KeyCode::Right
+                        if app.current_screen == CurrentScreen::P2PoolConfig
+                            && app.p2pool_conf_path.is_some() =>
+                    {
+                        app.p2pool_editor.next_tab()
+                    }
+
+                    KeyCode::Left
+                        if app.current_screen == CurrentScreen::P2PoolConfig
+                            && app.p2pool_conf_path.is_some() =>
+                    {
+                        app.p2pool_editor.previous_tab()
+                    }
+
+                    KeyCode::Up
+                        if app.current_screen == CurrentScreen::P2PoolConfig
+                            && app.p2pool_conf_path.is_some() =>
+                    {
+                        app.p2pool_editor.previous_field()
+                    }
+
+                    KeyCode::Down
+                        if app.current_screen == CurrentScreen::P2PoolConfig
+                            && app.p2pool_conf_path.is_some() =>
+                    {
+                        app.p2pool_editor.next_field()
+                    }
+
+                    // SIDEBAR
                     KeyCode::Up => {
                         if app.sidebar_index > 0 {
                             app.sidebar_index -= 1;
@@ -82,15 +142,9 @@ where
                         }
                     }
                     KeyCode::Down => {
-                        if app.sidebar_index < 1 {
+                        if app.sidebar_index < 2 {
                             app.sidebar_index += 1;
                             app.toggle_menu();
-                        }
-                    }
-                    KeyCode::Enter => {
-                        // If we are on "Bitcoin Config", open the explorer
-                        if app.current_screen == CurrentScreen::BitcoinConfig {
-                            app.current_screen = CurrentScreen::FileExplorer;
                         }
                     }
                     _ => {}
@@ -104,7 +158,10 @@ where
 mod tests {
     use super::*;
     use crossterm::event::{KeyEvent, KeyEventState, KeyModifiers};
+    use pdm::components::p2pool_parser::{ConfigField, ConfigSection};
     use ratatui::backend::TestBackend;
+    use std::env::temp_dir;
+    use std::fs::create_dir_all;
 
     #[test]
     fn test_app_integration_smoke_test() {
@@ -276,5 +333,104 @@ mod tests {
         assert!(res.is_ok());
 
         assert_eq!(app.bitcoin_conf_path, Some(file_path));
+    }
+
+    #[test]
+    fn test_p2pool_explorer_and_parser_flow() {
+        //  mock p2pool.conf
+        let base = temp_dir().join("pdm_p2pool_test");
+        let _ = std::fs::remove_dir_all(&base);
+        create_dir_all(&base).unwrap();
+        let conf_path = base.join("p2pool.conf");
+
+        std::fs::write(&conf_path, b"listen_port=9332\nwallet=abc").unwrap();
+
+        let backend = TestBackend::new(80, 25);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::new();
+        app.explorer.current_dir = base.clone();
+        app.explorer.load_directory();
+
+        let mut step = 0;
+        let event_provider = |app: &mut App| {
+            step += 1;
+            match step {
+                1 => Ok(Event::Key(KeyEvent::new(
+                    KeyCode::Down,
+                    KeyModifiers::empty(),
+                ))), // Bitcoin
+                2 => Ok(Event::Key(KeyEvent::new(
+                    KeyCode::Down,
+                    KeyModifiers::empty(),
+                ))), // P2Pool
+                3 => Ok(Event::Key(KeyEvent::new(
+                    KeyCode::Enter,
+                    KeyModifiers::empty(),
+                ))), // Open explorer
+                4 => Ok(Event::Key(KeyEvent::new(
+                    KeyCode::Down,
+                    KeyModifiers::empty(),
+                ))), // Move to p2pool.conf
+                5 => Ok(Event::Key(KeyEvent::new(
+                    KeyCode::Enter,
+                    KeyModifiers::empty(),
+                ))), // Select conf
+                6 => Ok(Event::Key(KeyEvent::new(
+                    KeyCode::Char('q'),
+                    KeyModifiers::empty(),
+                ))),
+
+                _ => panic!("unexpected"),
+            }
+        };
+
+        let res = run_app(&mut terminal, &mut app, event_provider);
+        assert!(res.is_ok());
+
+        assert_eq!(app.current_screen, CurrentScreen::P2PoolConfig);
+        assert_eq!(app.p2pool_conf_path, Some(conf_path));
+        assert!(
+            !app.p2pool_editor.sections.is_empty(),
+            "Editor should have loaded parsed sections"
+        );
+    }
+
+    #[test]
+    fn test_p2pool_editor_navigation() {
+        let mut app = App::new();
+        app.current_screen = CurrentScreen::P2PoolConfig;
+        app.p2pool_conf_path = Some("dummy".into());
+
+        app.p2pool_editor.load_data(vec![
+            ConfigSection {
+                title: "Network".into(),
+                fields: vec![
+                    ConfigField {
+                        key: "port".into(),
+                        value: "1".into(),
+                    },
+                    ConfigField {
+                        key: "addr".into(),
+                        value: "2".into(),
+                    },
+                ],
+            },
+            ConfigSection {
+                title: "Payout".into(),
+                fields: vec![ConfigField {
+                    key: "wallet".into(),
+                    value: "abc".into(),
+                }],
+            },
+        ]);
+
+        app.p2pool_editor.next_tab();
+        assert_eq!(app.p2pool_editor.selected_tab, 1);
+
+        app.p2pool_editor.previous_tab();
+        assert_eq!(app.p2pool_editor.selected_tab, 0);
+
+        app.p2pool_editor.next_field();
+        assert_eq!(app.p2pool_editor.field_state.selected(), Some(1));
     }
 }

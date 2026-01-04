@@ -5,7 +5,7 @@
 use crate::app::{App, CurrentScreen};
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Tabs, Wrap},
 };
 
 pub fn ui(f: &mut Frame, app: &mut App) {
@@ -18,7 +18,11 @@ pub fn ui(f: &mut Frame, app: &mut App) {
         .split(f.area());
 
     //  Sidebar
-    let items = vec![ListItem::new("Home"), ListItem::new("Bitcoin Config")];
+    let items = vec![
+        ListItem::new("Home"),
+        ListItem::new("Bitcoin Config"),
+        ListItem::new("P2Pool Config"),
+    ];
 
     // Highlight the active one
     let mut state = ListState::default();
@@ -57,6 +61,18 @@ pub fn ui(f: &mut Frame, app: &mut App) {
             );
             f.render_widget(p, main_area);
         }
+        CurrentScreen::P2PoolConfig => {
+            if app.p2pool_conf_path.is_some() {
+                render_config_editor(f, &mut app.p2pool_editor, main_area, "P2Pool Config");
+            } else {
+                let p = Paragraph::new("Press [Enter] to select a p2pool.conf file").block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(" P2Pool Config "),
+                );
+                f.render_widget(p, main_area);
+            }
+        }
         CurrentScreen::FileExplorer => {
             render_file_explorer(f, app, main_area);
         }
@@ -91,4 +107,58 @@ fn render_file_explorer(f: &mut Frame, app: &mut App, area: Rect) {
         .highlight_symbol(">> ");
 
     f.render_stateful_widget(list, area, &mut state);
+}
+
+fn render_config_editor(
+    f: &mut Frame,
+    editor: &mut crate::components::config_editor::ConfigEditor,
+    area: Rect,
+    title: &str,
+) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(0)])
+        .split(area);
+
+    // Tabs (Sections)
+    let titles: Vec<Line> = editor
+        .sections
+        .iter()
+        .map(|s| Line::from(s.title.clone()))
+        .collect();
+
+    let tabs = Tabs::new(titles)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(format!(" {} Sections ", title)),
+        )
+        .select(editor.selected_tab)
+        .highlight_style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        );
+
+    f.render_widget(tabs, chunks[0]);
+
+    // Fields List
+    if let Some(section) = editor.sections.get(editor.selected_tab) {
+        let items: Vec<ListItem> = section
+            .fields
+            .iter()
+            .map(|field| ListItem::new(format!("{} = {}", field.key, field.value)))
+            .collect();
+
+        let list = List::new(items)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Edit Fields "),
+            )
+            .highlight_style(Style::default().bg(Color::Blue).fg(Color::White))
+            .highlight_symbol(">> ");
+
+        f.render_stateful_widget(list, chunks[1], &mut editor.field_state);
+    }
 }
