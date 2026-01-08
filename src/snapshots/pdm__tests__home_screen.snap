@@ -9,7 +9,7 @@ TestBackend {
             "┌ PDM ──────────────────┐┌ Home ───────────────────────────────────────────────┐",
             "│Home                   ││Welcome to PDM.                                      │",
             "│Bitcoin Config         ││                                                     │",
-            "│                       ││No config loaded                                     │",
+            "│P2Pool Config          ││No config loaded                                     │",
             "│                       ││                                                     │",
             "│                       ││(Navigate to 'Bitcoin Config' to load)               │",
             "│                       ││                                                     │",
