@@ -104,3 +104,109 @@ impl Default for ConfigEditor {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::components::p2pool_parser::{ConfigField, ConfigSection};
+
+    fn make_editor() -> ConfigEditor {
+        let mut editor = ConfigEditor::new();
+        editor.load_data(vec![
+            ConfigSection {
+                title: "A".into(),
+                fields: vec![
+                    ConfigField {
+                        key: "k1".into(),
+                        value: "v1".into(),
+                    },
+                    ConfigField {
+                        key: "k2".into(),
+                        value: "v2".into(),
+                    },
+                ],
+            },
+            ConfigSection {
+                title: "B".into(),
+                fields: vec![ConfigField {
+                    key: "x".into(),
+                    value: "y".into(),
+                }],
+            },
+        ]);
+        editor
+    }
+
+    #[test]
+    fn load_data_autoselects_first_field() {
+        let editor = make_editor();
+        assert_eq!(editor.selected_tab, 0);
+        assert_eq!(editor.field_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn next_tab_wraps_and_resets_field() {
+        let mut editor = make_editor();
+        editor.next_tab();
+        assert_eq!(editor.selected_tab, 1);
+        assert_eq!(editor.field_state.selected(), Some(0));
+
+        editor.next_tab();
+        assert_eq!(editor.selected_tab, 0);
+    }
+
+    #[test]
+    fn previous_tab_wraps() {
+        let mut editor = make_editor();
+        editor.previous_tab();
+        assert_eq!(editor.selected_tab, 1);
+    }
+
+    #[test]
+    fn next_field_cycles() {
+        let mut editor = make_editor();
+        editor.next_field();
+        assert_eq!(editor.field_state.selected(), Some(1));
+
+        editor.next_field();
+        assert_eq!(editor.field_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn previous_field_cycles() {
+        let mut editor = make_editor();
+        editor.previous_field();
+        assert_eq!(editor.field_state.selected(), Some(1));
+    }
+
+    #[test]
+    fn empty_sections_safe_no_panic() {
+        let mut editor = ConfigEditor::new();
+        editor.next_tab();
+        editor.previous_tab();
+        editor.next_field();
+        editor.previous_field();
+        // Should not panic
+    }
+
+    #[test]
+    fn empty_fields_safe_no_panic() {
+        let mut editor = ConfigEditor::new();
+        editor.load_data(vec![ConfigSection {
+            title: "Empty".into(),
+            fields: vec![],
+        }]);
+
+        editor.next_field();
+        editor.previous_field();
+        assert_eq!(editor.field_state.selected(), None);
+    }
+
+    #[test]
+    fn default_constructs_clean_editor() {
+        let editor = ConfigEditor::default();
+        assert!(editor.sections.is_empty());
+        assert_eq!(editor.selected_tab, 0);
+        assert_eq!(editor.field_state.selected(), None);
+    }
+}

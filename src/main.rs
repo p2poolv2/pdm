@@ -433,4 +433,64 @@ mod tests {
         app.p2pool_editor.next_field();
         assert_eq!(app.p2pool_editor.field_state.selected(), Some(1));
     }
+
+    #[test]
+    fn test_p2pool_editor_key_routing_paths() {
+        use ratatui::backend::TestBackend;
+
+        let backend = TestBackend::new(80, 25);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::new();
+
+        // Load editor with data and move to P2Pool screen
+        app.current_screen = CurrentScreen::P2PoolConfig;
+        app.p2pool_conf_path = Some("dummy".into());
+
+        app.p2pool_editor.load_data(vec![ConfigSection {
+            title: "A".into(),
+            fields: vec![
+                ConfigField {
+                    key: "x".into(),
+                    value: "1".into(),
+                },
+                ConfigField {
+                    key: "y".into(),
+                    value: "2".into(),
+                },
+            ],
+        }]);
+
+        let mut step = 0;
+        let event_provider = |_app: &mut App| {
+            step += 1;
+            match step {
+                1 => Ok(Event::Key(KeyEvent::new(
+                    KeyCode::Right,
+                    KeyModifiers::empty(),
+                ))), // next_tab
+                2 => Ok(Event::Key(KeyEvent::new(
+                    KeyCode::Left,
+                    KeyModifiers::empty(),
+                ))), // prev_tab
+                3 => Ok(Event::Key(KeyEvent::new(
+                    KeyCode::Down,
+                    KeyModifiers::empty(),
+                ))), // next_field
+                4 => Ok(Event::Key(KeyEvent::new(
+                    KeyCode::Up,
+                    KeyModifiers::empty(),
+                ))), // prev_field
+                5 => Ok(Event::Key(KeyEvent::new(
+                    KeyCode::Char('q'),
+                    KeyModifiers::empty(),
+                ))),
+                _ => panic!("unexpected"),
+            }
+        };
+
+        let _ = run_app(&mut terminal, &mut app, event_provider).unwrap();
+
+        // Just verify routing happened (no panic and state moved)
+        assert_eq!(app.p2pool_editor.selected_tab, 0);
+    }
 }
