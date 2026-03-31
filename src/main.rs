@@ -5,7 +5,7 @@
 use p2poolv2_config::Config as P2PoolConfig;
 use pdm::app::AppAction;
 use pdm::app::{App, CurrentScreen};
-use pdm::config::parse_config as parse_bitcoin_config;
+use pdm::config::{parse_config as parse_bitcoin_config, write_config};
 use pdm::ui;
 
 use anyhow::Result;
@@ -59,6 +59,11 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Result<()> 
 
             let action = match app.current_screen {
                 CurrentScreen::FileExplorer => app.explorer.handle_input(key),
+
+                CurrentScreen::BitcoinConfig if !app.bitcoin_data.is_empty() => {
+                    app.bitcoin_config_view
+                        .handle_input(key, &mut app.bitcoin_data)
+                }
 
                 CurrentScreen::BitcoinStatus => match key.code {
                     KeyCode::Left => {
@@ -168,6 +173,8 @@ fn handle_action(action: AppAction, app: &mut App) -> Result<bool> {
                         app.bitcoin_conf_path = Some(path.clone());
                         if let Ok(entries) = parse_bitcoin_config(&path) {
                             app.bitcoin_data = entries;
+                            app.bitcoin_config_view
+                                .rebuild_sections(&app.bitcoin_data);
                         }
                         app.current_screen = CurrentScreen::BitcoinConfig;
                     }
@@ -175,6 +182,14 @@ fn handle_action(action: AppAction, app: &mut App) -> Result<bool> {
                 }
             }
             app.explorer_trigger = None;
+        }
+
+        AppAction::SaveConfig => {
+            if let Some(ref path) = app.bitcoin_conf_path {
+                if let Err(e) = write_config(path, &app.bitcoin_data) {
+                    eprintln!("Failed to save config: {e}");
+                }
+            }
         }
 
         AppAction::Navigate(screen) => {

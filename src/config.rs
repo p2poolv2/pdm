@@ -4,7 +4,7 @@
 
 use anyhow::Result;
 use config::{Config, File, FileFormat};
-use std::{collections::HashSet, path::Path};
+use std::{collections::HashSet, fmt, path::Path};
 
 /// Core Config
 #[derive(Debug, Clone)]
@@ -296,6 +296,21 @@ pub enum ConfigCategory {
     Mining,
     Relay,
     ZMQ,
+}
+
+impl fmt::Display for ConfigCategory {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ConfigCategory::Core => write!(f, "Core"),
+            ConfigCategory::Network => write!(f, "Network"),
+            ConfigCategory::RPC => write!(f, "RPC"),
+            ConfigCategory::Wallet => write!(f, "Wallet"),
+            ConfigCategory::Debugging => write!(f, "Debugging"),
+            ConfigCategory::Mining => write!(f, "Mining"),
+            ConfigCategory::Relay => write!(f, "Relay"),
+            ConfigCategory::ZMQ => write!(f, "ZMQ"),
+        }
+    }
 }
 
 /// Schema for a single configuration option
@@ -1377,6 +1392,62 @@ pub fn parse_config(path: &Path) -> Result<Vec<ConfigEntry>> {
     }
 
     Ok(entries)
+}
+
+/// The fixed display order for config categories.
+pub const CATEGORY_ORDER: &[ConfigCategory] = &[
+    ConfigCategory::Core,
+    ConfigCategory::Network,
+    ConfigCategory::RPC,
+    ConfigCategory::Wallet,
+    ConfigCategory::Mining,
+    ConfigCategory::Relay,
+    ConfigCategory::ZMQ,
+    ConfigCategory::Debugging,
+];
+
+/// Write config entries back to a bitcoin.conf file.
+/// Only enabled entries are written. Entries are grouped by category with comment headers.
+pub fn write_config(path: &Path, entries: &[ConfigEntry]) -> std::io::Result<()> {
+    use std::io::Write;
+
+    let mut output = Vec::new();
+
+    // Group enabled entries by category
+    for &category in CATEGORY_ORDER {
+        let section_entries: Vec<_> = entries
+            .iter()
+            .filter(|e| e.enabled && e.schema.as_ref().is_some_and(|s| s.category == category))
+            .collect();
+
+        if !section_entries.is_empty() {
+            if !output.is_empty() {
+                writeln!(output)?;
+            }
+            writeln!(output, "# {category}")?;
+            for entry in section_entries {
+                writeln!(output, "{}={}", entry.key, entry.value)?;
+            }
+        }
+    }
+
+    // Write "Other" entries (no schema)
+    let other_entries: Vec<_> = entries
+        .iter()
+        .filter(|e| e.enabled && e.schema.is_none())
+        .collect();
+
+    if !other_entries.is_empty() {
+        if !output.is_empty() {
+            writeln!(output)?;
+        }
+        writeln!(output, "# Other")?;
+        for entry in other_entries {
+            writeln!(output, "{}={}", entry.key, entry.value)?;
+        }
+    }
+
+    std::fs::write(path, output)
 }
 
 #[cfg(test)]
