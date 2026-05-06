@@ -4,7 +4,8 @@
 
 use p2poolv2_config::Config as P2PoolConfig;
 use pdm::app::{
-    App, AppAction, CurrentScreen, ExplorerTrigger, MAX_BITCOIN_STATUS_TAB, MAX_SIDEBAR_INDEX,
+    App, AppAction, CurrentScreen, ExplorerTrigger, MAX_BITCOIN_STATUS_TAB, MAX_P2POOL_STATUS_TAB,
+    MAX_SIDEBAR_INDEX,
 };
 use pdm::bitcoin_config::{
     parse_config as parse_bitcoin_config, save_config as save_bitcoin_config,
@@ -71,6 +72,7 @@ where
 {
     loop {
         app.poll_chain_info();
+        app.poll_peer_info();
         terminal.draw(|f| ui::ui(f, app))?;
 
         if let Event::Key(key) = event::read()? {
@@ -106,6 +108,22 @@ where
                     KeyCode::Right => {
                         if app.bitcoin_status_tab < MAX_BITCOIN_STATUS_TAB {
                             app.bitcoin_status_tab += 1;
+                        }
+                        AppAction::None
+                    }
+                    k => sidebar_nav(k, app),
+                },
+
+                CurrentScreen::P2PoolStatus => match key.code {
+                    KeyCode::Left => {
+                        if app.p2pool_status_tab > 0 {
+                            app.p2pool_status_tab -= 1;
+                        }
+                        AppAction::None
+                    }
+                    KeyCode::Right => {
+                        if app.p2pool_status_tab < MAX_P2POOL_STATUS_TAB {
+                            app.p2pool_status_tab += 1;
                         }
                         AppAction::None
                     }

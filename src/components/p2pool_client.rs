@@ -24,6 +24,12 @@ pub struct ChainInfo {
     pub chain_tip_blockhash: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct PeerInfo {
+    pub peer_id: String,
+    pub status: Option<String>,
+}
+
 fn build_client() -> Client {
     Client::builder()
         .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECONDS))
@@ -78,6 +84,20 @@ impl P2PoolClient {
 
         let response = request.send().await?.error_for_status()?;
         let data = response.json::<ChainInfo>().await?;
+
+        Ok(data)
+    }
+
+    pub async fn fetch_peer_info(&self) -> Result<Vec<PeerInfo>, reqwest::Error> {
+        let url = format!("{}/peers", self.base_url);
+        let mut request = self.client.get(url);
+
+        if let Some((user, pass)) = &self.auth_credentials {
+            request = request.basic_auth(user, Some(pass));
+        }
+
+        let response = request.send().await?.error_for_status()?;
+        let data = response.json::<Vec<PeerInfo>>().await?;
 
         Ok(data)
     }
@@ -149,6 +169,73 @@ mod tests {
             P2PoolClient::with_base_url(server.url()).with_auth("user".into(), "password".into());
 
         client.fetch_chain_info().await.unwrap();
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_fetch_peer_info_success() {
+        let mut server = Server::new_async().await;
+
+        let mock = server
+            .mock("GET", "/peers")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                json!([
+                    {
+                        "peer_id": "12D3KooWPeerOne",
+                        "status": "Connected"
+                    }
+                ])
+                .to_string(),
+            )
+            .create();
+
+        let client = P2PoolClient::with_base_url(server.url());
+        let result = client.fetch_peer_info().await.unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].peer_id, "12D3KooWPeerOne");
+        assert_eq!(result[0].status.as_deref(), Some("Connected"));
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_fetch_peer_info_accepts_missing_status() {
+        let mut server = Server::new_async().await;
+
+        let mock = server
+            .mock("GET", "/peers")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(json!([{ "peer_id": "12D3KooWPeerOne" }]).to_string())
+            .create();
+
+        let client = P2PoolClient::with_base_url(server.url());
+        let result = client.fetch_peer_info().await.unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].peer_id, "12D3KooWPeerOne");
+        assert_eq!(result[0].status, None);
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_fetch_peer_info_sends_basic_auth() {
+        let mut server = Server::new_async().await;
+
+        let mock = server
+            .mock("GET", "/peers")
+            .match_header("authorization", "Basic dXNlcjpwYXNzd29yZA==")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(json!([]).to_string())
+            .create();
+
+        let client =
+            P2PoolClient::with_base_url(server.url()).with_auth("user".into(), "password".into());
+
+        client.fetch_peer_info().await.unwrap();
         mock.assert();
     }
 

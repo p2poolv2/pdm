@@ -5,7 +5,7 @@
 use crate::bitcoin_config::ConfigEntry as BitcoinEntry;
 use crate::components::bitcoin_config_view::BitcoinConfigView;
 use crate::components::file_explorer::FileExplorer;
-use crate::components::p2pool_client::{ChainInfo, P2PoolClient};
+use crate::components::p2pool_client::{ChainInfo, P2PoolClient, PeerInfo};
 use crate::components::p2pool_config_view::P2PoolConfigView;
 use crate::components::settings_view::SettingsView;
 use crate::settings::Settings;
@@ -34,7 +34,7 @@ pub const BITCOIN_STATUS_TABS: &[&str] = &["Chain Info", "System", "Logs", "Peer
 pub const MAX_BITCOIN_STATUS_TAB: usize = BITCOIN_STATUS_TABS.len() - 1;
 
 /// Tab labels for the P2Pool Status view
-pub const P2POOL_STATUS_TABS: &[&str] = &["Chain Info"];
+pub const P2POOL_STATUS_TABS: &[&str] = &["Chain Info", "Peers Info"];
 
 pub const MAX_P2POOL_STATUS_TAB: usize = P2POOL_STATUS_TABS.len() - 1;
 
@@ -113,15 +113,21 @@ pub struct App {
     pub p2pool_status_tab: usize,
     pub chain_info: Option<ChainInfo>,
     pub p2pool_chain_info_error: Option<String>,
-    // async channel to receive chain info updates from the background task that fetches it when the P2Pool Status screen is opened
+    pub peer_info: Option<Vec<PeerInfo>>,
+    pub p2pool_peer_info_error: Option<String>,
+    // async channel to receive chain info updates from the background task that
+    // fetches it when the P2Pool Status screen is opened.
     pub chain_info_tx: mpsc::UnboundedSender<anyhow::Result<ChainInfo>>,
     pub chain_info_rx: mpsc::UnboundedReceiver<anyhow::Result<ChainInfo>>,
+    pub peer_info_tx: mpsc::UnboundedSender<anyhow::Result<Vec<PeerInfo>>>,
+    pub peer_info_rx: mpsc::UnboundedReceiver<anyhow::Result<Vec<PeerInfo>>>,
 }
 
 impl App {
     #[must_use]
     pub fn new() -> App {
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (chain_info_tx, chain_info_rx) = mpsc::unbounded_channel();
+        let (peer_info_tx, peer_info_rx) = mpsc::unbounded_channel();
         App {
             current_screen: CurrentScreen::Home,
             sidebar_index: 0,
@@ -142,8 +148,12 @@ impl App {
             p2pool_status_tab: 0,
             chain_info: None,
             p2pool_chain_info_error: None,
-            chain_info_tx: tx,
-            chain_info_rx: rx,
+            peer_info: None,
+            p2pool_peer_info_error: None,
+            chain_info_tx,
+            chain_info_rx,
+            peer_info_tx,
+            peer_info_rx,
         }
     }
 
@@ -170,6 +180,21 @@ impl App {
         }
     }
 
+    pub fn poll_peer_info(&mut self) {
+        while let Ok(result) = self.peer_info_rx.try_recv() {
+            match result {
+                Ok(info) => {
+                    self.peer_info = Some(info);
+                    self.p2pool_peer_info_error = None;
+                }
+                Err(e) => {
+                    self.peer_info = None;
+                    self.p2pool_peer_info_error = Some(e.to_string());
+                }
+            }
+        }
+    }
+
     // Logic to switch between sidebar items
     pub fn toggle_menu(&mut self) {
         if self.current_screen == CurrentScreen::BitcoinConfig {
@@ -187,13 +212,20 @@ impl App {
         if let Some(&(_, screen)) = SIDEBAR_ITEMS.get(self.sidebar_index) {
             self.current_screen = screen;
             if self.current_screen == CurrentScreen::P2PoolStatus {
-                let client = self.p2pool_client.clone();
-                let tx = self.chain_info_tx.clone();
+                let chain_client = self.p2pool_client.clone();
+                let chain_tx = self.chain_info_tx.clone();
+                let peer_client = self.p2pool_client.clone();
+                let peer_tx = self.peer_info_tx.clone();
 
                 if let Ok(handle) = tokio::runtime::Handle::try_current() {
                     handle.spawn(async move {
-                        let res = client.fetch_chain_info().await;
-                        let _ = tx.send(res.map_err(anyhow::Error::from));
+                        let res = chain_client.fetch_chain_info().await;
+                        let _ = chain_tx.send(res.map_err(anyhow::Error::from));
+                    });
+
+                    handle.spawn(async move {
+                        let res = peer_client.fetch_peer_info().await;
+                        let _ = peer_tx.send(res.map_err(anyhow::Error::from));
                     });
                 }
             }

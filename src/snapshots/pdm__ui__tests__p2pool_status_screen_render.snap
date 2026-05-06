@@ -7,7 +7,7 @@ TestBackend {
         area: Rect { x: 0, y: 0, width: 80, height: 24 },
         content: [
             "┌ PDM ──────────────────┐┌ Info ───────────────────────────────────────────────┐",
-            "│Home                   ││ Chain Info                                          │",
+            "│Home                   ││ Chain Info │ Peers Info                             │",
             "│Bitcoin Config         ││                                                     │",
             "│Bitcoin Status         │└─────────────────────────────────────────────────────┘",
             "│P2Pool Config          │┌ Chain Info ─────────────────────────────────────────┐",
@@ -29,7 +29,7 @@ TestBackend {
             "│                       ││                                                     │",
             "│                       ││                                                     │",
             "└───────────────────────┘└─────────────────────────────────────────────────────┘",
-            " ↑↓  Navigate sidebar   Enter  Select   q  Quit                                 ",
+            " ↑↓  Navigate sidebar   ←→  Switch tab   q  Quit                                ",
         ],
         styles: [
             x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
@@ -42,10 +42,10 @@ TestBackend {
             x: 0, y: 23, fg: White, bg: DarkGray, underline: Reset, modifier: NONE,
             x: 4, y: 23, fg: DarkGray, bg: Black, underline: Reset, modifier: NONE,
             x: 23, y: 23, fg: White, bg: DarkGray, underline: Reset, modifier: NONE,
-            x: 30, y: 23, fg: DarkGray, bg: Black, underline: Reset, modifier: NONE,
-            x: 39, y: 23, fg: White, bg: DarkGray, underline: Reset, modifier: NONE,
-            x: 42, y: 23, fg: DarkGray, bg: Black, underline: Reset, modifier: NONE,
-            x: 49, y: 23, fg: Reset, bg: Black, underline: Reset, modifier: NONE,
+            x: 27, y: 23, fg: DarkGray, bg: Black, underline: Reset, modifier: NONE,
+            x: 40, y: 23, fg: White, bg: DarkGray, underline: Reset, modifier: NONE,
+            x: 43, y: 23, fg: DarkGray, bg: Black, underline: Reset, modifier: NONE,
+            x: 50, y: 23, fg: Reset, bg: Black, underline: Reset, modifier: NONE,
         ]
     },
     scrollback: Buffer {

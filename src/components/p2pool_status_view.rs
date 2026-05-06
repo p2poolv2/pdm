@@ -36,6 +36,7 @@ impl P2PoolStatusView {
 
         match app.p2pool_status_tab {
             0 => Self::render_chain_info(f, app, outer[1]),
+            1 => Self::render_peer_info(f, app, outer[1]),
             _ => {}
         }
     }
@@ -71,6 +72,50 @@ impl P2PoolStatusView {
 
         let paragraph = Paragraph::new(text)
             .block(Block::default().borders(Borders::ALL).title(" Chain Info "))
+            .wrap(Wrap { trim: true });
+
+        f.render_widget(paragraph, area);
+    }
+
+    fn render_peer_info(f: &mut Frame, app: &App, area: Rect) {
+        let text = if let Some(peers) = &app.peer_info {
+            if peers.is_empty() {
+                vec![Line::from(Span::styled(
+                    "No connected peers",
+                    Style::default().fg(Color::DarkGray),
+                ))]
+            } else {
+                let mut lines = Vec::with_capacity(peers.len() + 2);
+                lines.push(Line::from(format!(
+                    "Connected Peers        : {}",
+                    peers.len()
+                )));
+                lines.push(Line::from(""));
+
+                for peer in peers {
+                    lines.push(Line::from(format!(
+                        "{} ({})",
+                        peer.peer_id,
+                        peer.status.as_deref().unwrap_or("Connected")
+                    )));
+                }
+
+                lines
+            }
+        } else if let Some(err) = &app.p2pool_peer_info_error {
+            vec![Line::from(Span::styled(
+                format!("Failed to fetch peer info: {err}"),
+                Style::default().fg(Color::Red),
+            ))]
+        } else {
+            vec![Line::from(Span::styled(
+                "Loading peer info...",
+                Style::default().fg(Color::DarkGray),
+            ))]
+        };
+
+        let paragraph = Paragraph::new(text)
+            .block(Block::default().borders(Borders::ALL).title(" Peers Info "))
             .wrap(Wrap { trim: true });
 
         f.render_widget(paragraph, area);
