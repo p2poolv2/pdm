@@ -23,6 +23,7 @@ use crossterm::{
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::{Terminal, backend::Backend, backend::CrosstermBackend};
+use std::{io, time::Duration};
 use std::io;
 use std::time::Duration;
 
@@ -83,7 +84,9 @@ where
 {
     loop {
         app.poll_chain_info();
+        app.poll_share_info();
         app.poll_peer_info();
+        app.poll_live_p2pool_events();
         terminal.draw(|f| ui::ui(f, app))?;
 
         if event::poll(Duration::from_millis(100))? {
