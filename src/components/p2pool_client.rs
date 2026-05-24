@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 use crate::components::p2pool_websocket::P2PoolWebSocketClient;
-use crate::config::load_api_config;
+use crate::config::{ApiConfig, load_api_config};
 use reqwest::Client;
 use serde::Deserialize;
 use serde::Deserializer;
@@ -11,7 +11,6 @@ use serde::de::DeserializeOwned;
 use std::time::Duration;
 
 const REQUEST_TIMEOUT_SECONDS: u64 = 10;
-const TESTNET4_FALLBACK_BASE_URL: &str = "https://testnet4.p2poolv2.org";
 
 #[derive(Debug, Clone)]
 pub struct P2PoolClient {
@@ -74,21 +73,22 @@ fn build_client() -> Client {
 
 impl P2PoolClient {
     pub fn new() -> Self {
-        let (base_url, auth_credentials) = load_api_config()
-            .map(|cfg| {
-                let credentials = cfg.auth_user.zip(cfg.auth_pass);
-                (cfg.base_url, credentials)
-            })
-            .unwrap_or_else(|_| (TESTNET4_FALLBACK_BASE_URL.to_string(), None));
+        Self::from_config(load_api_config().unwrap_or_default())
+    }
 
-        let fallback_base_url = (base_url != TESTNET4_FALLBACK_BASE_URL)
-            .then(|| TESTNET4_FALLBACK_BASE_URL.to_string());
+    fn from_config(config: ApiConfig) -> Self {
+        let client = P2PoolClient::with_base_url(&config.base_url);
 
-        Self {
-            client: build_client(),
-            base_url,
-            fallback_base_url,
-            auth_credentials,
+        let client = if let Some(fallback) = &config.fallback_base_url {
+            client.with_fallback_base_url(fallback)
+        } else {
+            client
+        };
+
+        if let Some((user, pass)) = config.auth_user.zip(config.auth_pass) {
+            client.with_auth(user, pass)
+        } else {
+            client
         }
     }
 
@@ -231,23 +231,33 @@ mod tests {
     use mockito::{Matcher, Server};
     use serde_json::json;
 
+    const PRIMARY_BASE_URL: &str = "http://127.0.0.1:46884";
+    const FALLBACK_BASE_URL: &str = "http://127.0.0.1:46885";
+
+    fn api_config(fallback_base_url: Option<&str>) -> ApiConfig {
+        ApiConfig {
+            base_url: PRIMARY_BASE_URL.to_string(),
+            fallback_base_url: fallback_base_url.map(str::to_string),
+            auth_user: None,
+            auth_pass: None,
+        }
+    }
+
     #[test]
     fn explicit_base_url_does_not_enable_network_fallback() {
-        let client = P2PoolClient::with_base_url("http://127.0.0.1:46884");
+        let config = api_config(None);
+        let client = P2PoolClient::from_config(config);
 
-        assert_eq!(client.base_url, "http://127.0.0.1:46884");
+        assert_eq!(client.base_url, PRIMARY_BASE_URL);
         assert_eq!(client.fallback_base_url, None);
     }
 
     #[test]
     fn fallback_base_url_can_be_configured() {
-        let client = P2PoolClient::with_base_url("http://127.0.0.1:46884")
-            .with_fallback_base_url("https://testnet4.p2poolv2.org");
+        let config = api_config(Some(FALLBACK_BASE_URL));
+        let client = P2PoolClient::from_config(config);
 
-        assert_eq!(
-            client.fallback_base_url.as_deref(),
-            Some("https://testnet4.p2poolv2.org")
-        );
+        assert_eq!(client.fallback_base_url.as_deref(), Some(FALLBACK_BASE_URL));
     }
 
     #[tokio::test]

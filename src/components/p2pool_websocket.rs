@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use crate::config::load_api_config;
+use crate::config::{ApiConfig, load_api_config};
 use anyhow::{Context, Result};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
@@ -12,8 +12,6 @@ use tokio::sync::mpsc;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 use url::Url;
-
-const TESTNET4_FALLBACK_BASE_URL: &str = "https://testnet4.p2poolv2.org";
 
 #[derive(Debug, Clone)]
 pub struct P2PoolWebSocketClient {
@@ -75,20 +73,22 @@ pub enum LiveP2PoolEvent {
 
 impl P2PoolWebSocketClient {
     pub fn new() -> Self {
-        let (base_url, auth_credentials) = load_api_config()
-            .map(|cfg| {
-                let credentials = cfg.auth_user.zip(cfg.auth_pass);
-                (cfg.base_url, credentials)
-            })
-            .unwrap_or_else(|_| (TESTNET4_FALLBACK_BASE_URL.to_string(), None));
+        Self::from_config(load_api_config().unwrap_or_default())
+    }
 
-        let fallback_base_url = (base_url != TESTNET4_FALLBACK_BASE_URL)
-            .then(|| TESTNET4_FALLBACK_BASE_URL.to_string());
+    fn from_config(config: ApiConfig) -> Self {
+        let client = P2PoolWebSocketClient::with_base_url(&config.base_url);
 
-        Self {
-            base_url,
-            fallback_base_url,
-            auth_credentials,
+        let client = if let Some(fallback) = &config.fallback_base_url {
+            client.with_fallback_base_url(fallback)
+        } else {
+            client
+        };
+
+        if let Some((user, pass)) = config.auth_user.zip(config.auth_pass) {
+            client.with_auth(user, pass)
+        } else {
+            client
         }
     }
 
@@ -253,11 +253,11 @@ mod tests {
 
     #[test]
     fn ws_url_converts_https_fallback_to_wss() {
-        let client = P2PoolWebSocketClient::with_base_url("https://testnet4.p2poolv2.org");
+        let client = P2PoolWebSocketClient::with_base_url("https://127.0.0.1:46884");
 
         let url = client.ws_url("/ws").unwrap();
 
-        assert_eq!(url.as_str(), "wss://testnet4.p2poolv2.org/ws");
+        assert_eq!(url.as_str(), "wss://127.0.0.1:46884/ws");
     }
 
     #[test]
