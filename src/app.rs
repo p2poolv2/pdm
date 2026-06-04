@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 use crate::bitcoin_config::ConfigEntry as BitcoinEntry;
+use crate::components::bitcoin_client::{BitcoinChainInfo, BitcoinClient};
 use crate::components::bitcoin_config_view::BitcoinConfigView;
 use crate::components::file_explorer::FileExplorer;
 use crate::components::p2pool_client::{ChainInfo, P2PoolClient, PeerInfo, SharesResponse};
@@ -105,6 +106,8 @@ pub struct App {
     pub p2pool_config: Option<P2PoolConfig>,
     pub bitcoin_data: Vec<BitcoinEntry>,
     pub bitcoin_status_tab: usize,
+    pub bitcoin_chain_info: Option<BitcoinChainInfo>,
+    pub bitcoin_chain_info_error: Option<String>,
     pub settings: Settings,
     pub p2pool_client: P2PoolClient,
     pub p2pool_websocket_client: P2PoolWebSocketClient,
@@ -125,6 +128,8 @@ pub struct App {
     pub live_peer_events: Vec<LivePeerEvent>,
     pub p2pool_live_error: Option<String>,
     pub p2pool_live_stream_started: bool,
+    pub bitcoin_chain_info_tx: mpsc::UnboundedSender<anyhow::Result<BitcoinChainInfo>>,
+    pub bitcoin_chain_info_rx: mpsc::UnboundedReceiver<anyhow::Result<BitcoinChainInfo>>,
     pub p2pool_live_tx: mpsc::UnboundedSender<anyhow::Result<LiveP2PoolEvent>>,
     pub p2pool_live_rx: mpsc::UnboundedReceiver<anyhow::Result<LiveP2PoolEvent>>,
     // async channel to receive chain info updates from the background task that
@@ -141,6 +146,7 @@ impl App {
     #[must_use]
     pub fn new() -> App {
         let (chain_info_tx, chain_info_rx) = mpsc::unbounded_channel();
+        let (bitcoin_chain_info_tx, bitcoin_chain_info_rx) = mpsc::unbounded_channel();
         let (peer_info_tx, peer_info_rx) = mpsc::unbounded_channel();
         let (share_info_tx, share_info_rx) = mpsc::unbounded_channel();
         let (p2pool_live_tx, p2pool_live_rx) = mpsc::unbounded_channel();
@@ -157,6 +163,8 @@ impl App {
             p2pool_config: None,
             bitcoin_data: Vec::new(),
             bitcoin_status_tab: 0,
+            bitcoin_chain_info: None,
+            bitcoin_chain_info_error: None,
             settings: Settings::default(),
             p2pool_client: P2PoolClient::new(),
             p2pool_websocket_client: P2PoolWebSocketClient::new(),
@@ -173,6 +181,8 @@ impl App {
             live_peer_events: Vec::new(),
             p2pool_live_error: None,
             p2pool_live_stream_started: false,
+            bitcoin_chain_info_tx,
+            bitcoin_chain_info_rx,
             p2pool_live_tx,
             p2pool_live_rx,
             chain_info_tx,
@@ -203,6 +213,21 @@ impl App {
                 Err(e) => {
                     self.chain_info = None;
                     self.p2pool_chain_info_error = Some(e.to_string());
+                }
+            }
+        }
+    }
+
+    pub fn poll_bitcoin_chain_info(&mut self) {
+        while let Ok(result) = self.bitcoin_chain_info_rx.try_recv() {
+            match result {
+                Ok(info) => {
+                    self.bitcoin_chain_info = Some(info);
+                    self.bitcoin_chain_info_error = None;
+                }
+                Err(e) => {
+                    self.bitcoin_chain_info = None;
+                    self.bitcoin_chain_info_error = Some(e.to_string());
                 }
             }
         }
@@ -305,6 +330,9 @@ impl App {
         }
         if let Some(&(_, screen)) = SIDEBAR_ITEMS.get(self.sidebar_index) {
             self.current_screen = screen;
+            if self.current_screen == CurrentScreen::BitcoinStatus {
+                self.fetch_bitcoin_chain_info();
+            }
             if self.current_screen == CurrentScreen::P2PoolStatus {
                 let chain_client = self.p2pool_client.clone();
                 let chain_tx = self.chain_info_tx.clone();
@@ -345,6 +373,25 @@ impl App {
                     }
                 }
             }
+        }
+    }
+
+    fn fetch_bitcoin_chain_info(&mut self) {
+        self.bitcoin_chain_info = None;
+        self.bitcoin_chain_info_error = None;
+
+        if self.bitcoin_conf_path.is_none() {
+            return;
+        }
+
+        let client = BitcoinClient::from_config_entries(&self.bitcoin_data);
+        let tx = self.bitcoin_chain_info_tx.clone();
+
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move {
+                let res = client.fetch_chain_info().await;
+                let _ = tx.send(res);
+            });
         }
     }
 }
