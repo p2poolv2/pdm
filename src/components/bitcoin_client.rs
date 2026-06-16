@@ -425,10 +425,7 @@ mod tests {
         assert_eq!(result.connection_count, Some(8));
         assert_eq!(
             result.connected_peer_addresses,
-            vec![
-                "192.0.2.1:8333".to_string(),
-                "203.0.113.5:8333".to_string(),
-            ]
+            vec!["192.0.2.1:8333".to_string(), "203.0.113.5:8333".to_string(),]
         );
         chain_mock.assert();
         connections_mock.assert();
