@@ -26,6 +26,7 @@ pub struct BitcoinChainInfo {
     pub verification_progress: Option<f64>,
     pub initial_block_download: Option<bool>,
     pub connection_count: Option<u64>,
+    pub connected_peer_addresses: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,6 +45,11 @@ struct BlockchainInfoResponse {
     bestblockhash: String,
     verificationprogress: Option<f64>,
     initialblockdownload: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PeerInfoResponse {
+    addr: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -87,6 +93,7 @@ impl BitcoinClient {
     pub async fn fetch_chain_info(&self) -> Result<BitcoinChainInfo> {
         let chain_info: BlockchainInfoResponse = self.rpc_call("getblockchaininfo").await?;
         let connection_count = self.rpc_call("getconnectioncount").await.ok();
+        let connected_peer_addresses = self.fetch_connected_peer_addresses().await?;
 
         Ok(BitcoinChainInfo {
             network: display_network(&chain_info.chain).to_string(),
@@ -95,7 +102,20 @@ impl BitcoinClient {
             verification_progress: chain_info.verificationprogress,
             initial_block_download: chain_info.initialblockdownload,
             connection_count,
+            connected_peer_addresses,
         })
+    }
+
+    async fn fetch_connected_peer_addresses(&self) -> Result<Vec<String>> {
+        let peers: Vec<PeerInfoResponse> = self.rpc_call("getpeerinfo").await?;
+
+        Ok(peers
+            .into_iter()
+            .filter_map(|peer| {
+                let address = peer.addr?.trim().to_string();
+                (!address.is_empty()).then_some(address)
+            })
+            .collect())
     }
 
     async fn rpc_call<T>(&self, method: &str) -> Result<T>
@@ -369,6 +389,23 @@ mod tests {
             .with_header("content-type", "application/json")
             .with_body(json!({ "result": 8u64, "error": null, "id": "pdm" }).to_string())
             .create();
+        let peers_mock = server
+            .mock("POST", "/")
+            .match_body(Matcher::Regex("getpeerinfo".to_string()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                json!({
+                    "result": [
+                        { "addr": "192.0.2.1:8333" },
+                        { "addr": "203.0.113.5:8333" }
+                    ],
+                    "error": null,
+                    "id": "pdm"
+                })
+                .to_string(),
+            )
+            .create();
         let client = BitcoinClient {
             client: build_client(),
             url: server.url(),
@@ -386,8 +423,16 @@ mod tests {
         assert_eq!(result.verification_progress, Some(0.9999));
         assert_eq!(result.initial_block_download, Some(false));
         assert_eq!(result.connection_count, Some(8));
+        assert_eq!(
+            result.connected_peer_addresses,
+            vec![
+                "192.0.2.1:8333".to_string(),
+                "203.0.113.5:8333".to_string(),
+            ]
+        );
         chain_mock.assert();
         connections_mock.assert();
+        peers_mock.assert();
     }
 
     #[tokio::test]

@@ -61,13 +61,7 @@ impl BitcoinStatusView {
                 f.render_widget(p, content_area);
             }
             // Peers
-            3 => {
-                let text = "Peers";
-                let p = Paragraph::new(text)
-                    .block(Block::default().borders(Borders::ALL))
-                    .wrap(Wrap { trim: true });
-                f.render_widget(p, content_area);
-            }
+            3 => Self::render_peers(f, app, content_area),
             _ => {}
         }
     }
@@ -110,6 +104,51 @@ impl BitcoinStatusView {
 
         let paragraph = Paragraph::new(text)
             .block(Block::default().borders(Borders::ALL).title(" Chain Info "))
+            .wrap(Wrap { trim: true });
+
+        f.render_widget(paragraph, area);
+    }
+
+    fn render_peers(f: &mut Frame, app: &App, area: Rect) {
+        let text = if app.bitcoin_conf_path.is_none() {
+            vec![Line::from(Span::styled(
+                "Select a bitcoin.conf file to load Bitcoin Core peer info.",
+                Style::default().fg(Color::DarkGray),
+            ))]
+        } else if let Some(info) = &app.bitcoin_chain_info {
+            let mut lines = Vec::with_capacity(info.connected_peer_addresses.len() + 3);
+            lines.push(Line::from(format!(
+                "Connected Peers: {}",
+                info.connected_peer_addresses.len()
+            )));
+            lines.push(Line::from(""));
+            lines.push(Line::from("Peer Addresses:"));
+
+            if info.connected_peer_addresses.is_empty() {
+                lines.push(Line::from("None"));
+            } else {
+                lines.extend(
+                    info.connected_peer_addresses
+                        .iter()
+                        .map(|address| Line::from(format!("* {address}"))),
+                );
+            }
+
+            lines
+        } else if let Some(err) = &app.bitcoin_chain_info_error {
+            vec![Line::from(Span::styled(
+                format!("Failed to fetch Bitcoin peer info: {err}"),
+                Style::default().fg(Color::Red),
+            ))]
+        } else {
+            vec![Line::from(Span::styled(
+                "Loading Bitcoin peer info...",
+                Style::default().fg(Color::DarkGray),
+            ))]
+        };
+
+        let paragraph = Paragraph::new(text)
+            .block(Block::default().borders(Borders::ALL).title(" Peers "))
             .wrap(Wrap { trim: true });
 
         f.render_widget(paragraph, area);
