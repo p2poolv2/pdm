@@ -112,6 +112,8 @@ pub fn ui(f: &mut Frame, app: &mut App) {
 mod tests {
     use super::*;
     use crate::app::App;
+    use crate::components::p2pool_client::P2PoolClient;
+    use mockito::Server;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
@@ -192,8 +194,25 @@ mod tests {
 
     #[test]
     fn test_p2pool_status_screen_render() {
+        let mut server = Server::new();
+        let _mock = server
+            .mock("GET", "/chain_info")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                serde_json::json!({
+                    "genesis_blockhash": null,
+                    "chain_tip_height": 1,
+                    "total_work": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                    "chain_tip_blockhash": null
+                })
+                .to_string(),
+            )
+            .create();
+
+        let client = P2PoolClient::with_base_url(server.url());
+        let mut app = App::new_with_client(client);
         let mut terminal = make_terminal();
-        let mut app = App::new();
         app.sidebar_index = 4;
         app.toggle_menu();
         terminal.draw(|f| ui(f, &mut app)).unwrap();

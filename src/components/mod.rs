@@ -8,6 +8,7 @@ pub mod file_explorer;
 pub mod home_view;
 pub mod ln_config_view;
 pub mod ln_status_view;
+pub mod p2pool_client;
 pub mod p2pool_config_view;
 pub mod p2pool_status_view;
 pub mod settings_view;

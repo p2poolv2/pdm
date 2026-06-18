@@ -5,11 +5,13 @@
 use crate::bitcoin_config::ConfigEntry as BitcoinEntry;
 use crate::components::bitcoin_config_view::BitcoinConfigView;
 use crate::components::file_explorer::FileExplorer;
+use crate::components::p2pool_client::{ChainInfo, P2PoolClient};
 use crate::components::p2pool_config_view::P2PoolConfigView;
 use crate::components::settings_view::SettingsView;
 use crate::settings::Settings;
 use p2poolv2_config::Config as P2PoolConfig;
 use std::path::PathBuf;
+use tokio::sync::mpsc;
 
 /// Sidebar items labels
 pub const SIDEBAR_ITEMS: &[(&str, CurrentScreen)] = &[
@@ -30,6 +32,11 @@ pub const MAX_SIDEBAR_INDEX: usize = SIDEBAR_ITEMS.len() - 1;
 pub const BITCOIN_STATUS_TABS: &[&str] = &["Chain Info", "System", "Logs", "Peers"];
 
 pub const MAX_BITCOIN_STATUS_TAB: usize = BITCOIN_STATUS_TABS.len() - 1;
+
+/// Tab labels for the P2Pool Status view
+pub const P2POOL_STATUS_TABS: &[&str] = &["Chain Info"];
+
+pub const MAX_P2POOL_STATUS_TAB: usize = P2POOL_STATUS_TABS.len() - 1;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum CurrentScreen {
@@ -96,17 +103,25 @@ pub struct App {
     pub bitcoin_data: Vec<BitcoinEntry>,
     pub bitcoin_status_tab: usize,
     pub settings: Settings,
+    pub p2pool_client: P2PoolClient,
     /// Cached value of the `HOME` environment variable, used for path display.
     /// Populated once at startup to avoid repeated syscalls during rendering.
     pub home_dir: String,
     /// Cached result of `settings::config_dir()`, used to display the default
     /// settings storage path without repeated env-var lookups during rendering.
     pub config_dir: PathBuf,
+    pub p2pool_status_tab: usize,
+    pub chain_info: Option<ChainInfo>,
+    pub p2pool_chain_info_error: Option<String>,
+    // async channel to receive chain info updates from the background task that fetches it when the P2Pool Status screen is opened
+    pub chain_info_tx: mpsc::UnboundedSender<anyhow::Result<ChainInfo>>,
+    pub chain_info_rx: mpsc::UnboundedReceiver<anyhow::Result<ChainInfo>>,
 }
 
 impl App {
     #[must_use]
     pub fn new() -> App {
+        let (tx, rx) = mpsc::unbounded_channel();
         App {
             current_screen: CurrentScreen::Home,
             sidebar_index: 0,
@@ -121,8 +136,37 @@ impl App {
             bitcoin_data: Vec::new(),
             bitcoin_status_tab: 0,
             settings: Settings::default(),
+            p2pool_client: P2PoolClient::new(),
             home_dir: std::env::var("HOME").unwrap_or_default(),
             config_dir: crate::settings::config_dir().unwrap_or_default(),
+            p2pool_status_tab: 0,
+            chain_info: None,
+            p2pool_chain_info_error: None,
+            chain_info_tx: tx,
+            chain_info_rx: rx,
+        }
+    }
+
+    #[must_use]
+    pub fn new_with_client(client: P2PoolClient) -> App {
+        let mut app = App::new();
+        app.p2pool_client = client;
+        app
+    }
+
+    /// Non-blocking result handler
+    pub fn poll_chain_info(&mut self) {
+        while let Ok(result) = self.chain_info_rx.try_recv() {
+            match result {
+                Ok(info) => {
+                    self.chain_info = Some(info);
+                    self.p2pool_chain_info_error = None;
+                }
+                Err(e) => {
+                    self.chain_info = None;
+                    self.p2pool_chain_info_error = Some(e.to_string());
+                }
+            }
         }
     }
 
@@ -142,6 +186,17 @@ impl App {
         }
         if let Some(&(_, screen)) = SIDEBAR_ITEMS.get(self.sidebar_index) {
             self.current_screen = screen;
+            if self.current_screen == CurrentScreen::P2PoolStatus {
+                let client = self.p2pool_client.clone();
+                let tx = self.chain_info_tx.clone();
+
+                if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                    handle.spawn(async move {
+                        let res = client.fetch_chain_info().await;
+                        let _ = tx.send(res.map_err(anyhow::Error::from));
+                    });
+                }
+            }
         }
     }
 }

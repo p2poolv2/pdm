@@ -1,6 +1,5 @@
 ---
 source: src/ui.rs
-assertion_line: 423
 expression: terminal.backend()
 ---
 TestBackend {
