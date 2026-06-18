@@ -90,7 +90,9 @@ impl StatusBar {
                         1 => s.p2pool_conf_path.is_some(),
                         2 => s.ln_conf_path.is_some(),
                         3 => s.shares_market_conf_path.is_some(),
-                        4 => s.settings_dir_override.is_some(),
+                        4 => s.bitcoin_core_data_dir.is_some(),
+                        5 => s.bitcoin_core_log_path.is_some(),
+                        6 => s.settings_dir_override.is_some(),
                         _ => false,
                     };
                     spans.extend(hint("↑↓", "Navigate"));
@@ -106,6 +108,21 @@ impl StatusBar {
                         spans.extend(hint("⌫", "Clear"));
                     }
                     spans.extend(hint("Esc", "Back"));
+                }
+            }
+            CurrentScreen::BitcoinStatus if app.bitcoin_status_tab == 2 => {
+                if app.bitcoin_log_input_mode.is_some() {
+                    spans.extend(hint("Enter", "Apply"));
+                    spans.extend(hint("Esc", "Cancel"));
+                    spans.extend(hint("⌫", "Delete"));
+                } else {
+                    spans.extend(hint("↑↓", "Scroll logs"));
+                    spans.extend(hint("←→", "Switch tab"));
+                    spans.extend(hint("b", "Browse log"));
+                    spans.extend(hint("o", "Browse dir"));
+                    spans.extend(hint("/", "Search"));
+                    spans.extend(hint("r", "Refresh"));
+                    spans.extend(hint("q", "Quit"));
                 }
             }
             CurrentScreen::BitcoinStatus | CurrentScreen::P2PoolStatus => {
@@ -358,8 +375,31 @@ mod tests {
         let mut app = App::new();
         app.current_screen = CurrentScreen::Settings;
         app.settings_view.sidebar_focused = false;
-        app.settings_view.selected_index = 4;
+        app.settings_view.selected_index = 6;
         app.settings.settings_dir_override = Some(std::path::PathBuf::from("/custom/dir"));
+        let output = render_status_bar(&app);
+        assert!(output.contains("Clear"));
+    }
+
+    #[test]
+    fn settings_content_bitcoin_core_data_dir_field_set_shows_clear() {
+        let mut app = App::new();
+        app.current_screen = CurrentScreen::Settings;
+        app.settings_view.sidebar_focused = false;
+        app.settings_view.selected_index = 4;
+        app.settings.bitcoin_core_data_dir = Some(std::path::PathBuf::from("/tmp/bitcoin"));
+        let output = render_status_bar(&app);
+        assert!(output.contains("Clear"));
+    }
+
+    #[test]
+    fn settings_content_bitcoin_core_log_path_field_set_shows_clear() {
+        let mut app = App::new();
+        app.current_screen = CurrentScreen::Settings;
+        app.settings_view.sidebar_focused = false;
+        app.settings_view.selected_index = 5;
+        app.settings.bitcoin_core_log_path =
+            Some(std::path::PathBuf::from("/tmp/bitcoin/debug.log"));
         let output = render_status_bar(&app);
         assert!(output.contains("Clear"));
     }

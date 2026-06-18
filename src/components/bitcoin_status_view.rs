@@ -2,8 +2,9 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use crate::app::{App, BITCOIN_STATUS_TABS};
+use crate::app::{App, AppAction, BITCOIN_STATUS_TABS, BitcoinLogInputMode, ExplorerTrigger};
 
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     prelude::*,
     widgets::{Block, Borders, Paragraph, Tabs, Wrap},
@@ -53,16 +54,139 @@ impl BitcoinStatusView {
                 f.render_widget(p, content_area);
             }
             // Logs
-            2 => {
-                let text = "Logs";
-                let p = Paragraph::new(text)
-                    .block(Block::default().borders(Borders::ALL))
-                    .wrap(Wrap { trim: true });
-                f.render_widget(p, content_area);
-            }
+            2 => Self::render_logs(f, app, content_area),
             // Peers
             3 => Self::render_peers(f, app, content_area),
             _ => {}
+        }
+    }
+
+    pub fn handle_logs_input(app: &mut App, key: KeyEvent) -> AppAction {
+        if let Some(mode) = app.bitcoin_log_input_mode {
+            return Self::handle_logs_text_input(app, key, mode);
+        }
+
+        match key.code {
+            KeyCode::Char('/') => {
+                app.bitcoin_log_input_mode = Some(BitcoinLogInputMode::Search);
+                app.bitcoin_log_input = app.bitcoin_log_filter.clone();
+                AppAction::None
+            }
+            KeyCode::Char('p') => {
+                app.bitcoin_log_input_mode = Some(BitcoinLogInputMode::LogFilePath);
+                app.bitcoin_log_input = app
+                    .bitcoin_log_path
+                    .as_ref()
+                    .map(|path| path.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                AppAction::None
+            }
+            KeyCode::Char('g') | KeyCode::Char('d') => {
+                app.bitcoin_log_input_mode = Some(BitcoinLogInputMode::DataDirPath);
+                app.bitcoin_log_input = app
+                    .settings
+                    .bitcoin_core_data_dir
+                    .as_ref()
+                    .map(|path| path.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                AppAction::None
+            }
+            KeyCode::Char('b') => AppAction::OpenExplorer(ExplorerTrigger::BitcoinCoreLogFile),
+            KeyCode::Char('o') => AppAction::OpenExplorer(ExplorerTrigger::BitcoinCoreDataDir),
+            KeyCode::Char('r') => AppAction::RefreshBitcoinLogs,
+            KeyCode::Char('a') => AppAction::ToggleBitcoinLogAutoScroll,
+            KeyCode::Char('c') => AppAction::CopyBitcoinLogs,
+            KeyCode::Esc if !app.bitcoin_log_filter.is_empty() => {
+                app.bitcoin_log_filter.clear();
+                app.bitcoin_log_scroll = 0;
+                AppAction::None
+            }
+            KeyCode::Up => {
+                app.bitcoin_log_scroll = app.bitcoin_log_scroll.saturating_sub(1);
+                app.bitcoin_log_auto_scroll = app.bitcoin_log_scroll == 0;
+                AppAction::None
+            }
+            KeyCode::Down => {
+                app.bitcoin_log_scroll = Self::next_scroll(app, 1);
+                app.bitcoin_log_auto_scroll = false;
+                AppAction::None
+            }
+            KeyCode::PageUp => {
+                app.bitcoin_log_scroll = app.bitcoin_log_scroll.saturating_sub(10);
+                app.bitcoin_log_auto_scroll = app.bitcoin_log_scroll == 0;
+                AppAction::None
+            }
+            KeyCode::PageDown => {
+                app.bitcoin_log_scroll = Self::next_scroll(app, 10);
+                app.bitcoin_log_auto_scroll = false;
+                AppAction::None
+            }
+            KeyCode::Home => {
+                app.bitcoin_log_scroll = 0;
+                app.bitcoin_log_auto_scroll = true;
+                AppAction::None
+            }
+            KeyCode::End => {
+                app.bitcoin_log_scroll = Self::max_scroll(app);
+                app.bitcoin_log_auto_scroll = false;
+                AppAction::None
+            }
+            _ => AppAction::None,
+        }
+    }
+
+    fn handle_logs_text_input(
+        app: &mut App,
+        key: KeyEvent,
+        mode: BitcoinLogInputMode,
+    ) -> AppAction {
+        match key.code {
+            KeyCode::Enter => {
+                let input = app.bitcoin_log_input.trim().to_string();
+                app.bitcoin_log_input.clear();
+                app.bitcoin_log_input_mode = None;
+
+                match mode {
+                    BitcoinLogInputMode::Search => {
+                        app.bitcoin_log_filter = input;
+                        app.bitcoin_log_scroll = 0;
+                        AppAction::None
+                    }
+                    BitcoinLogInputMode::LogFilePath if input.is_empty() => {
+                        app.bitcoin_log_status = "Log file path cannot be empty.".to_string();
+                        AppAction::None
+                    }
+                    BitcoinLogInputMode::LogFilePath => {
+                        AppAction::SetBitcoinLogFile(std::path::PathBuf::from(input))
+                    }
+                    BitcoinLogInputMode::DataDirPath if input.is_empty() => {
+                        app.bitcoin_log_status =
+                            "Bitcoin Core data directory cannot be empty.".to_string();
+                        AppAction::None
+                    }
+                    BitcoinLogInputMode::DataDirPath => {
+                        AppAction::SetBitcoinLogDataDir(std::path::PathBuf::from(input))
+                    }
+                }
+            }
+            KeyCode::Esc => {
+                app.bitcoin_log_input.clear();
+                app.bitcoin_log_input_mode = None;
+                AppAction::None
+            }
+            KeyCode::Backspace => {
+                app.bitcoin_log_input.pop();
+                AppAction::None
+            }
+            KeyCode::Char(ch)
+                if !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                app.bitcoin_log_input.push(ch);
+                AppAction::None
+            }
+            _ => AppAction::None,
         }
     }
 
@@ -152,6 +276,155 @@ impl BitcoinStatusView {
             .wrap(Wrap { trim: true });
 
         f.render_widget(paragraph, area);
+    }
+
+    fn render_logs(f: &mut Frame, app: &App, area: Rect) {
+        let constraints = if app.bitcoin_log_input_mode.is_some() {
+            vec![
+                Constraint::Length(6),
+                Constraint::Length(3),
+                Constraint::Min(0),
+            ]
+        } else {
+            vec![Constraint::Length(6), Constraint::Min(0)]
+        };
+
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(constraints)
+            .split(area);
+
+        let path = app
+            .bitcoin_log_path
+            .as_ref()
+            .map(|path| path.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "(not configured)".to_string());
+        let filtered_count = app.filtered_bitcoin_log_lines().len();
+        let total_count = app.bitcoin_log_lines.len();
+        let filter = if app.bitcoin_log_filter.trim().is_empty() {
+            "(none)".to_string()
+        } else {
+            app.bitcoin_log_filter.clone()
+        };
+        let auto_scroll = if app.bitcoin_log_auto_scroll {
+            "on"
+        } else {
+            "off"
+        };
+
+        let summary = vec![
+            Line::from(vec![
+                Span::styled("Current log file path: ", Style::default().fg(Color::Gray)),
+                Span::raw(path),
+            ]),
+            Line::from(vec![
+                Span::styled("Status: ", Style::default().fg(Color::Gray)),
+                Span::raw(app.bitcoin_log_status.clone()),
+            ]),
+            Line::from(vec![
+                Span::styled("Filter: ", Style::default().fg(Color::Gray)),
+                Span::raw(filter),
+                Span::styled("  Auto-scroll: ", Style::default().fg(Color::Gray)),
+                Span::raw(auto_scroll),
+                Span::styled("  Lines: ", Style::default().fg(Color::Gray)),
+                Span::raw(format!("{filtered_count}/{total_count}")),
+            ]),
+            Self::log_controls_line(),
+        ];
+
+        let summary_panel = Paragraph::new(summary)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Bitcoin Core Logs "),
+            )
+            .wrap(Wrap { trim: false });
+        f.render_widget(summary_panel, chunks[0]);
+
+        let log_area = if app.bitcoin_log_input_mode.is_some() {
+            let input_panel = Paragraph::new(app.bitcoin_log_input.clone())
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(Self::input_title(app.bitcoin_log_input_mode)),
+                )
+                .style(Style::default().fg(Color::White));
+            f.render_widget(input_panel, chunks[1]);
+            chunks[2]
+        } else {
+            chunks[1]
+        };
+
+        let log_lines = Self::log_lines(app);
+        let log_panel = Paragraph::new(log_lines)
+            .block(Block::default().borders(Borders::ALL).title(" debug.log "))
+            .style(Style::default().bg(Color::Black).fg(Color::LightGreen))
+            .scroll((app.bitcoin_log_scroll, 0));
+        f.render_widget(log_panel, log_area);
+    }
+
+    fn log_controls_line() -> Line<'static> {
+        Line::from(vec![
+            Span::styled("[b] Browse log ", Style::default().fg(Color::Cyan)),
+            Span::styled("[o] Data dir ", Style::default().fg(Color::Cyan)),
+            Span::styled("[p] Path ", Style::default().fg(Color::Cyan)),
+            Span::styled("[g] Dir path ", Style::default().fg(Color::Cyan)),
+            Span::styled("[/] Search ", Style::default().fg(Color::Cyan)),
+            Span::styled("[r] Refresh ", Style::default().fg(Color::Cyan)),
+            Span::styled("[a] Auto ", Style::default().fg(Color::Cyan)),
+            Span::styled("[c] Copy", Style::default().fg(Color::Cyan)),
+        ])
+    }
+
+    fn input_title(mode: Option<BitcoinLogInputMode>) -> &'static str {
+        match mode {
+            Some(BitcoinLogInputMode::Search) => " Search/filter logs ",
+            Some(BitcoinLogInputMode::LogFilePath) => " Bitcoin Core debug.log path ",
+            Some(BitcoinLogInputMode::DataDirPath) => " Bitcoin Core data directory ",
+            None => " Input ",
+        }
+    }
+
+    fn log_lines(app: &App) -> Vec<Line<'static>> {
+        if app.bitcoin_log_path.is_none() {
+            return vec![Line::from(Span::styled(
+                "No Bitcoin Core debug.log found. Choose a log file or Bitcoin data directory.",
+                Style::default().fg(Color::Yellow),
+            ))];
+        }
+
+        if app.bitcoin_log_lines.is_empty() {
+            return vec![Line::from(Span::styled(
+                app.bitcoin_log_status.clone(),
+                Style::default().fg(Color::DarkGray),
+            ))];
+        }
+
+        let filtered = app.filtered_bitcoin_log_lines();
+        if filtered.is_empty() {
+            return vec![Line::from(Span::styled(
+                "No log entries match the current filter.",
+                Style::default().fg(Color::DarkGray),
+            ))];
+        }
+
+        filtered
+            .into_iter()
+            .map(|line| Line::from(Span::raw(line.to_string())))
+            .collect()
+    }
+
+    fn max_scroll(app: &App) -> u16 {
+        app.filtered_bitcoin_log_lines()
+            .len()
+            .saturating_sub(1)
+            .min(u16::MAX as usize) as u16
+    }
+
+    fn next_scroll(app: &App, delta: u16) -> u16 {
+        app.bitcoin_log_scroll
+            .saturating_add(delta)
+            .min(Self::max_scroll(app))
     }
 
     fn format_verification_progress(progress: Option<f64>) -> String {
