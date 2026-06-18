@@ -10,7 +10,10 @@ use pdm::app::{
 use pdm::bitcoin_config::{
     parse_config as parse_bitcoin_config, save_config as save_bitcoin_config,
 };
-use pdm::components::settings_view::{FIELDS, FieldKind};
+use pdm::components::{
+    bitcoin_status_view::BitcoinStatusView,
+    settings_view::{FIELDS, FieldKind},
+};
 use pdm::p2poolv2_config::{apply_edit as apply_p2pool_edit, flatten_config};
 use pdm::settings::{load_settings, save_settings};
 use pdm::ui;
@@ -82,6 +85,8 @@ where
 {
     loop {
         app.poll_bitcoin_chain_info();
+        app.poll_bitcoin_logs();
+        app.maybe_refresh_bitcoin_logs();
         app.poll_chain_info();
         app.poll_share_info();
         app.poll_peer_info();
@@ -263,6 +268,8 @@ fn bootstrap_from_settings(app: &mut App) {
             }
         }
     }
+
+    app.resolve_bitcoin_log_path();
 }
 
 // Logic Handler
@@ -274,10 +281,12 @@ fn handle_action(action: AppAction, app: &mut App) -> Result<ControlFlow<()>> {
         AppAction::ToggleMenu => app.toggle_menu(),
 
         AppAction::OpenExplorer(trigger) => {
-            if app.explorer.allow_dir_select {
-                app.explorer.allow_dir_select = false;
-                app.explorer.load_directory();
+            let dir_select = matches!(trigger, ExplorerTrigger::BitcoinCoreDataDir);
+            if app.explorer.allow_dir_select != dir_select {
+                app.explorer.allow_dir_select = dir_select;
             }
+            prepare_explorer_start_dir(app, &trigger);
+            app.explorer.load_directory();
             app.explorer_trigger = Some(trigger);
             app.current_screen = CurrentScreen::FileExplorer;
         }
@@ -342,6 +351,26 @@ fn handle_action(action: AppAction, app: &mut App) -> Result<ControlFlow<()>> {
                         }
                         app.current_screen = CurrentScreen::P2PoolConfig;
                     }
+                    ExplorerTrigger::BitcoinCoreDataDir => {
+                        app.set_bitcoin_log_data_dir(path.clone());
+                        app.settings_view.save_error = None;
+                        if let Err(e) = save_settings(&app.settings) {
+                            app.settings_view.save_error = Some(format!("Save failed: {e}"));
+                        }
+                        app.current_screen = CurrentScreen::BitcoinStatus;
+                        app.bitcoin_status_tab = 2;
+                        app.refresh_bitcoin_logs();
+                    }
+                    ExplorerTrigger::BitcoinCoreLogFile => {
+                        app.set_bitcoin_log_file(path.clone());
+                        app.settings_view.save_error = None;
+                        if let Err(e) = save_settings(&app.settings) {
+                            app.settings_view.save_error = Some(format!("Save failed: {e}"));
+                        }
+                        app.current_screen = CurrentScreen::BitcoinStatus;
+                        app.bitcoin_status_tab = 2;
+                        app.refresh_bitcoin_logs();
+                    }
                     ExplorerTrigger::BitcoinConfig => match parse_bitcoin_config(&path) {
                         Ok(entries) => {
                             const MIN_KNOWN_KEYS: usize = 1;
@@ -365,6 +394,7 @@ fn handle_action(action: AppAction, app: &mut App) -> Result<ControlFlow<()>> {
                                     app.settings_view.save_error = Some(save_error.clone());
                                     app.bitcoin_config_view.warning_message = Some(save_error);
                                 }
+                                app.resolve_bitcoin_log_path();
                             } else {
                                 app.bitcoin_config_view.warning_message = Some(
                                     "File does not appear to be a Bitcoin config. Select another file."
@@ -397,6 +427,7 @@ fn handle_action(action: AppAction, app: &mut App) -> Result<ControlFlow<()>> {
                                         app.bitcoin_config_view.dirty = false;
                                         app.bitcoin_config_view.warning_message = None;
                                         app.settings.bitcoin_conf_path = Some(path.clone());
+                                        app.resolve_bitcoin_log_path();
                                     } else {
                                         app.settings_view.save_error = Some(
                                             "File does not appear to be a Bitcoin config."
@@ -435,7 +466,9 @@ fn handle_action(action: AppAction, app: &mut App) -> Result<ControlFlow<()>> {
                             },
                             2 => app.settings.ln_conf_path = Some(path.clone()),
                             3 => app.settings.shares_market_conf_path = Some(path.clone()),
-                            4 => app.settings.settings_dir_override = Some(path.clone()),
+                            4 => app.set_bitcoin_log_data_dir(path.clone()),
+                            5 => app.set_bitcoin_log_file(path.clone()),
+                            6 => app.settings.settings_dir_override = Some(path.clone()),
                             _ => {}
                         }
                         if should_save {
@@ -478,6 +511,7 @@ fn handle_action(action: AppAction, app: &mut App) -> Result<ControlFlow<()>> {
                     app.settings.bitcoin_conf_path = None;
                     app.bitcoin_conf_path = None;
                     app.bitcoin_data.clear();
+                    app.resolve_bitcoin_log_path();
                 }
                 1 => {
                     app.settings.p2pool_conf_path = None;
@@ -486,7 +520,17 @@ fn handle_action(action: AppAction, app: &mut App) -> Result<ControlFlow<()>> {
                 }
                 2 => app.settings.ln_conf_path = None,
                 3 => app.settings.shares_market_conf_path = None,
-                4 => app.settings.settings_dir_override = None,
+                4 => {
+                    app.settings.bitcoin_core_data_dir = None;
+                    app.resolve_bitcoin_log_path();
+                    app.reset_bitcoin_log_reader();
+                }
+                5 => {
+                    app.settings.bitcoin_core_log_path = None;
+                    app.resolve_bitcoin_log_path();
+                    app.reset_bitcoin_log_reader();
+                }
+                6 => app.settings.settings_dir_override = None,
                 _ => {}
             }
             app.settings_view.save_error = None;
@@ -524,10 +568,65 @@ fn handle_action(action: AppAction, app: &mut App) -> Result<ControlFlow<()>> {
             }
         }
 
+        AppAction::RefreshBitcoinLogs => {
+            app.refresh_bitcoin_logs();
+        }
+
+        AppAction::ToggleBitcoinLogAutoScroll => {
+            app.bitcoin_log_auto_scroll = !app.bitcoin_log_auto_scroll;
+            if app.bitcoin_log_auto_scroll {
+                app.bitcoin_log_scroll = 0;
+            }
+        }
+
+        AppAction::SetBitcoinLogDataDir(path) => {
+            app.set_bitcoin_log_data_dir(path);
+            app.settings_view.save_error = None;
+            if let Err(e) = save_settings(&app.settings) {
+                app.settings_view.save_error = Some(format!("Save failed: {e}"));
+            }
+            app.refresh_bitcoin_logs();
+        }
+
+        AppAction::SetBitcoinLogFile(path) => {
+            app.set_bitcoin_log_file(path);
+            app.settings_view.save_error = None;
+            if let Err(e) = save_settings(&app.settings) {
+                app.settings_view.save_error = Some(format!("Save failed: {e}"));
+            }
+            app.refresh_bitcoin_logs();
+        }
+
+        AppAction::CopyBitcoinLogs => {
+            app.copy_filtered_bitcoin_logs();
+        }
+
         AppAction::None => {}
     }
 
     Ok(ControlFlow::Continue(()))
+}
+
+fn prepare_explorer_start_dir(app: &mut App, trigger: &ExplorerTrigger) {
+    let start_dir = match trigger {
+        ExplorerTrigger::BitcoinCoreDataDir => app
+            .settings
+            .bitcoin_core_data_dir
+            .as_ref()
+            .filter(|path| path.is_dir())
+            .cloned(),
+        ExplorerTrigger::BitcoinCoreLogFile => app
+            .bitcoin_log_path
+            .as_ref()
+            .and_then(|path| path.parent())
+            .filter(|path| path.is_dir())
+            .map(std::path::Path::to_path_buf),
+        _ => None,
+    };
+
+    if let Some(dir) = start_dir {
+        app.explorer.current_dir = dir;
+    }
 }
 
 /// Matches the TOML type of an existing item and parses the new string
@@ -1832,13 +1931,61 @@ port = 46884
         assert!(app.settings.p2pool_conf_path.is_none());
         assert!(app.settings.ln_conf_path.is_none());
         assert!(app.settings.shares_market_conf_path.is_none());
+        assert!(app.settings.bitcoin_core_data_dir.is_none());
+        assert!(app.settings.bitcoin_core_log_path.is_none());
         assert!(app.settings.settings_dir_override.is_none());
         assert_eq!(app.current_screen, CurrentScreen::Settings);
     }
 
     #[test]
     #[serial]
-    fn file_selected_for_settings_field_4_sets_dir_override() {
+    fn file_selected_for_settings_field_4_sets_bitcoin_core_data_dir() {
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        redirect_saves_to(&dir);
+        let bitcoin_dir = tempdir().unwrap();
+
+        let mut app = App::new();
+        app.explorer_trigger = Some(ExplorerTrigger::Settings(4));
+        run(
+            AppAction::FileSelected(bitcoin_dir.path().to_path_buf()),
+            &mut app,
+        );
+
+        assert_eq!(
+            app.settings.bitcoin_core_data_dir,
+            Some(bitcoin_dir.path().to_path_buf())
+        );
+        assert_eq!(
+            app.bitcoin_log_path,
+            Some(bitcoin_dir.path().join("debug.log"))
+        );
+        assert_eq!(app.current_screen, CurrentScreen::Settings);
+    }
+
+    #[test]
+    #[serial]
+    fn file_selected_for_settings_field_5_sets_bitcoin_core_log_path() {
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        redirect_saves_to(&dir);
+        let path = dir.path().join("debug.log");
+        std::fs::write(&path, "log\n").unwrap();
+
+        let mut app = App::new();
+        app.explorer_trigger = Some(ExplorerTrigger::Settings(5));
+        run(AppAction::FileSelected(path.clone()), &mut app);
+
+        assert_eq!(app.settings.bitcoin_core_log_path, Some(path.clone()));
+        assert_eq!(app.bitcoin_log_path, Some(path));
+        assert_eq!(app.current_screen, CurrentScreen::Settings);
+    }
+
+    #[test]
+    #[serial]
+    fn file_selected_for_settings_field_6_sets_dir_override() {
         use tempfile::tempdir;
 
         let dir = tempdir().unwrap();
@@ -1847,7 +1994,7 @@ port = 46884
         let settings_dir = tempdir().unwrap();
 
         let mut app = App::new();
-        app.explorer_trigger = Some(ExplorerTrigger::Settings(4));
+        app.explorer_trigger = Some(ExplorerTrigger::Settings(6));
         run(
             AppAction::FileSelected(settings_dir.path().to_path_buf()),
             &mut app,
@@ -1867,6 +2014,14 @@ port = 46884
     fn open_explorer_for_settings_field4_enables_dir_select() {
         let mut app = App::new();
         run(AppAction::OpenExplorerForSettings(4), &mut app);
+        assert!(app.explorer.allow_dir_select);
+        assert_eq!(app.current_screen, CurrentScreen::FileExplorer);
+    }
+
+    #[test]
+    fn open_explorer_for_settings_field6_enables_dir_select() {
+        let mut app = App::new();
+        run(AppAction::OpenExplorerForSettings(6), &mut app);
         assert!(app.explorer.allow_dir_select);
         assert_eq!(app.current_screen, CurrentScreen::FileExplorer);
     }
@@ -1924,8 +2079,12 @@ port = 46884
         app.settings.p2pool_conf_path = Some(PathBuf::from("/tmp/p2pool.toml"));
         app.settings.ln_conf_path = Some(PathBuf::from("/tmp/ln.conf"));
         app.settings.shares_market_conf_path = Some(PathBuf::from("/tmp/shares.conf"));
+        app.settings.bitcoin_core_data_dir = Some(PathBuf::from("/tmp/bitcoin"));
+        app.settings.bitcoin_core_log_path = Some(PathBuf::from("/tmp/bitcoin/debug.log"));
+        app.settings.settings_dir_override = Some(PathBuf::from("/tmp/pdm"));
         app.bitcoin_conf_path = Some(PathBuf::from("/tmp/bitcoin.conf"));
         app.p2pool_conf_path = Some(PathBuf::from("/tmp/p2pool.toml"));
+        app.bitcoin_log_path = Some(PathBuf::from("/tmp/bitcoin/debug.log"));
 
         run(AppAction::ClearSettingsField(0), &mut app);
         assert!(app.settings.bitcoin_conf_path.is_none());
@@ -1942,6 +2101,15 @@ port = 46884
 
         run(AppAction::ClearSettingsField(3), &mut app);
         assert!(app.settings.shares_market_conf_path.is_none());
+
+        run(AppAction::ClearSettingsField(4), &mut app);
+        assert!(app.settings.bitcoin_core_data_dir.is_none());
+
+        run(AppAction::ClearSettingsField(5), &mut app);
+        assert!(app.settings.bitcoin_core_log_path.is_none());
+
+        run(AppAction::ClearSettingsField(6), &mut app);
+        assert!(app.settings.settings_dir_override.is_none());
     }
 
     #[test]

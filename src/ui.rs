@@ -165,6 +165,10 @@ mod tests {
         app.sidebar_index = 2;
         app.toggle_menu();
         app.bitcoin_status_tab = 2;
+        app.bitcoin_log_path = None;
+        app.bitcoin_log_lines.clear();
+        app.bitcoin_log_status =
+            "No Bitcoin Core debug.log found. Choose a log file or data directory.".to_string();
         terminal.draw(|f| ui(f, &mut app)).unwrap();
         insta::assert_debug_snapshot!(terminal.backend());
     }

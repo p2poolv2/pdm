@@ -20,6 +20,10 @@ use std::path::PathBuf;
 pub struct Settings {
     /// Path to the Bitcoin Core config file (bitcoin.conf)
     pub bitcoin_conf_path: Option<PathBuf>,
+    /// Path to the Bitcoin Core data directory.
+    pub bitcoin_core_data_dir: Option<PathBuf>,
+    /// Direct path to the Bitcoin Core debug log file.
+    pub bitcoin_core_log_path: Option<PathBuf>,
     /// Path to the p2poolv2 config file
     pub p2pool_conf_path: Option<PathBuf>,
     /// Path to the Lightning Network config file
@@ -119,6 +123,8 @@ mod tests {
     fn default_settings_has_no_paths() {
         let s = Settings::default();
         assert!(s.bitcoin_conf_path.is_none());
+        assert!(s.bitcoin_core_data_dir.is_none());
+        assert!(s.bitcoin_core_log_path.is_none());
         assert!(s.p2pool_conf_path.is_none());
         assert!(s.ln_conf_path.is_none());
         assert!(s.shares_market_conf_path.is_none());
@@ -132,6 +138,8 @@ mod tests {
         let path = dir.path().join("settings.toml");
         let settings = Settings {
             bitcoin_conf_path: Some(PathBuf::from("/tmp/bitcoin.conf")),
+            bitcoin_core_data_dir: Some(PathBuf::from("/tmp/bitcoin")),
+            bitcoin_core_log_path: Some(PathBuf::from("/tmp/bitcoin/debug.log")),
             p2pool_conf_path: Some(PathBuf::from("/tmp/p2pool.toml")),
             ..Default::default()
         };
@@ -141,6 +149,8 @@ mod tests {
         let loaded: Settings = toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
 
         assert_eq!(loaded.bitcoin_conf_path, settings.bitcoin_conf_path);
+        assert_eq!(loaded.bitcoin_core_data_dir, settings.bitcoin_core_data_dir);
+        assert_eq!(loaded.bitcoin_core_log_path, settings.bitcoin_core_log_path);
         assert_eq!(loaded.p2pool_conf_path, settings.p2pool_conf_path);
         assert!(loaded.ln_conf_path.is_none());
     }
@@ -214,6 +224,8 @@ mod tests {
         // No settings.toml written
         let settings = load_settings();
         assert!(settings.bitcoin_conf_path.is_none());
+        assert!(settings.bitcoin_core_data_dir.is_none());
+        assert!(settings.bitcoin_core_log_path.is_none());
     }
 
     #[test]
@@ -224,6 +236,8 @@ mod tests {
         std::fs::write(dir.path().join("settings.toml"), "not valid toml :::").unwrap();
         let settings = load_settings();
         assert!(settings.bitcoin_conf_path.is_none());
+        assert!(settings.bitcoin_core_data_dir.is_none());
+        assert!(settings.bitcoin_core_log_path.is_none());
     }
 
     #[test]
@@ -240,6 +254,32 @@ mod tests {
         assert_eq!(
             settings.bitcoin_conf_path,
             Some(PathBuf::from("/tmp/bitcoin.conf"))
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn load_settings_reads_bitcoin_core_log_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        set_config_dir(&dir);
+        std::fs::write(
+            dir.path().join("settings.toml"),
+            r#"
+bitcoin_core_data_dir = "/tmp/bitcoin"
+bitcoin_core_log_path = "/tmp/bitcoin/debug.log"
+"#,
+        )
+        .unwrap();
+
+        let settings = load_settings();
+
+        assert_eq!(
+            settings.bitcoin_core_data_dir,
+            Some(PathBuf::from("/tmp/bitcoin"))
+        );
+        assert_eq!(
+            settings.bitcoin_core_log_path,
+            Some(PathBuf::from("/tmp/bitcoin/debug.log"))
         );
     }
 

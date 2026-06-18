@@ -10,7 +10,7 @@ use ratatui::{
 };
 
 /// Number of settings fields.
-pub const FIELD_COUNT: usize = 5;
+pub const FIELD_COUNT: usize = 7;
 
 /// Describes how a settings field behaves when Enter is pressed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,6 +27,8 @@ pub const FIELDS: [(&str, FieldKind); FIELD_COUNT] = [
     ("P2Pool config path", FieldKind::FilePicker),
     ("LN config path", FieldKind::FilePicker),
     ("Shares Market config path", FieldKind::FilePicker),
+    ("Bitcoin Core data directory", FieldKind::DirectoryPicker),
+    ("Bitcoin Core log file", FieldKind::FilePicker),
     ("Settings directory", FieldKind::DirectoryPicker),
 ];
 
@@ -97,6 +99,14 @@ impl SettingsView {
                 .as_ref()
                 .map(|p| p.to_string_lossy().into_owned()),
             app.settings
+                .bitcoin_core_data_dir
+                .as_ref()
+                .map(|p| p.to_string_lossy().into_owned()),
+            app.settings
+                .bitcoin_core_log_path
+                .as_ref()
+                .map(|p| p.to_string_lossy().into_owned()),
+            app.settings
                 .settings_dir_override
                 .as_ref()
                 .map(|p| p.to_string_lossy().into_owned()),
@@ -114,7 +124,7 @@ impl SettingsView {
                             .add_modifier(Modifier::BOLD),
                     ),
                     None => {
-                        if idx == 4 {
+                        if idx == 6 {
                             let path = if app.config_dir.as_os_str().is_empty() {
                                 "(unknown)".to_string()
                             } else {
@@ -272,6 +282,9 @@ mod tests {
         app.settings.p2pool_conf_path = Some(std::path::PathBuf::from("/tmp/p2pool.toml"));
         app.settings.ln_conf_path = Some(std::path::PathBuf::from("/tmp/ln.conf"));
         app.settings.shares_market_conf_path = Some(std::path::PathBuf::from("/tmp/shares.conf"));
+        app.settings.bitcoin_core_data_dir = Some(std::path::PathBuf::from("/tmp/bitcoin"));
+        app.settings.bitcoin_core_log_path =
+            Some(std::path::PathBuf::from("/tmp/bitcoin/debug.log"));
         app.settings.settings_dir_override = Some(std::path::PathBuf::from("/custom/dir"));
         app.settings_view.sidebar_focused = false;
 
@@ -297,7 +310,7 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn render_field4_shows_default_config_dir_when_no_override() {
+    fn render_field6_shows_default_config_dir_when_no_override() {
         use crate::app::App;
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
