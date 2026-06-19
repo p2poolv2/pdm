@@ -24,6 +24,7 @@ use crossterm::{
 };
 use ratatui::{Terminal, backend::Backend, backend::CrosstermBackend};
 use std::io;
+use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -75,138 +76,140 @@ where
         app.poll_peer_info();
         terminal.draw(|f| ui::ui(f, app))?;
 
-        if let Event::Key(key) = event::read()? {
-            if key.kind != KeyEventKind::Press {
-                continue;
-            }
+        if event::poll(Duration::from_millis(100))? {
+            if let Event::Key(key) = event::read()? {
+                if key.kind != KeyEventKind::Press {
+                    continue;
+                }
 
-            // Ctrl-C is always a hard exit.
-            // 'q' is suppressed while a text-input field is active.
-            let text_input_active = (app.current_screen == CurrentScreen::BitcoinConfig
-                && !app.bitcoin_config_view.sidebar_focused
-                && app.bitcoin_config_view.editing)
-                || (app.current_screen == CurrentScreen::P2PoolConfig
-                    && !app.p2pool_config_view.sidebar_focused
-                    && app.p2pool_config_view.editing);
+                // Ctrl-C is always a hard exit.
+                // 'q' is suppressed while a text-input field is active.
+                let text_input_active = (app.current_screen == CurrentScreen::BitcoinConfig
+                    && !app.bitcoin_config_view.sidebar_focused
+                    && app.bitcoin_config_view.editing)
+                    || (app.current_screen == CurrentScreen::P2PoolConfig
+                        && !app.p2pool_config_view.sidebar_focused
+                        && app.p2pool_config_view.editing);
 
-            if (key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('c'))
-                || (!text_input_active && key.code == KeyCode::Char('q'))
-            {
-                return Ok(());
-            }
+                if (key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('c'))
+                    || (!text_input_active && key.code == KeyCode::Char('q'))
+                {
+                    return Ok(());
+                }
 
-            let action = match app.current_screen {
-                CurrentScreen::FileExplorer => app.explorer.handle_input(key),
+                let action = match app.current_screen {
+                    CurrentScreen::FileExplorer => app.explorer.handle_input(key),
 
-                CurrentScreen::BitcoinStatus => match key.code {
-                    KeyCode::Left => {
-                        if app.bitcoin_status_tab > 0 {
-                            app.bitcoin_status_tab -= 1;
+                    CurrentScreen::BitcoinStatus => match key.code {
+                        KeyCode::Left => {
+                            if app.bitcoin_status_tab > 0 {
+                                app.bitcoin_status_tab -= 1;
+                            }
+                            AppAction::None
                         }
-                        AppAction::None
-                    }
-                    KeyCode::Right => {
-                        if app.bitcoin_status_tab < MAX_BITCOIN_STATUS_TAB {
-                            app.bitcoin_status_tab += 1;
+                        KeyCode::Right => {
+                            if app.bitcoin_status_tab < MAX_BITCOIN_STATUS_TAB {
+                                app.bitcoin_status_tab += 1;
+                            }
+                            AppAction::None
                         }
-                        AppAction::None
-                    }
-                    k => sidebar_nav(k, app),
-                },
+                        k => sidebar_nav(k, app),
+                    },
 
-                CurrentScreen::P2PoolStatus => match key.code {
-                    KeyCode::Left => {
-                        if app.p2pool_status_tab > 0 {
-                            app.p2pool_status_tab -= 1;
+                    CurrentScreen::P2PoolStatus => match key.code {
+                        KeyCode::Left => {
+                            if app.p2pool_status_tab > 0 {
+                                app.p2pool_status_tab -= 1;
+                            }
+                            AppAction::None
                         }
-                        AppAction::None
-                    }
-                    KeyCode::Right => {
-                        if app.p2pool_status_tab < MAX_P2POOL_STATUS_TAB {
-                            app.p2pool_status_tab += 1;
+                        KeyCode::Right => {
+                            if app.p2pool_status_tab < MAX_P2POOL_STATUS_TAB {
+                                app.p2pool_status_tab += 1;
+                            }
+                            AppAction::None
                         }
-                        AppAction::None
-                    }
-                    k => sidebar_nav(k, app),
-                },
+                        k => sidebar_nav(k, app),
+                    },
 
-                CurrentScreen::BitcoinConfig => {
-                    if app.bitcoin_conf_path.is_some() {
-                        if app.bitcoin_config_view.sidebar_focused {
+                    CurrentScreen::BitcoinConfig => {
+                        if app.bitcoin_conf_path.is_some() {
+                            if app.bitcoin_config_view.sidebar_focused {
+                                match key.code {
+                                    KeyCode::Enter => {
+                                        app.bitcoin_config_view.sidebar_focused = false;
+                                        AppAction::None
+                                    }
+                                    k => sidebar_nav(k, app),
+                                }
+                            } else {
+                                let entries = &app.bitcoin_data;
+                                app.bitcoin_config_view.handle_input(key, entries)
+                            }
+                        } else {
                             match key.code {
                                 KeyCode::Enter => {
-                                    app.bitcoin_config_view.sidebar_focused = false;
+                                    app.bitcoin_config_view.warning_message = None;
+                                    AppAction::OpenExplorer(ExplorerTrigger::BitcoinConfig)
+                                }
+                                KeyCode::Esc => AppAction::CloseModal,
+                                k => sidebar_nav(k, app),
+                            }
+                        }
+                    }
+
+                    // P2Pool config
+                    CurrentScreen::P2PoolConfig => {
+                        if app.p2pool_conf_path.is_some() {
+                            if app.p2pool_config_view.sidebar_focused {
+                                match key.code {
+                                    KeyCode::Enter => {
+                                        app.p2pool_config_view.sidebar_focused = false;
+                                        AppAction::None
+                                    }
+                                    k => sidebar_nav(k, app),
+                                }
+                            } else {
+                                // Build flat entry list and delegate to the view
+                                let entries = app
+                                    .p2pool_config
+                                    .as_ref()
+                                    .map(|cfg| flatten_config(cfg))
+                                    .unwrap_or_default();
+                                app.p2pool_config_view.handle_input(key, &entries)
+                            }
+                        } else {
+                            match key.code {
+                                KeyCode::Enter => {
+                                    app.p2pool_config_view.warning_message = None;
+                                    AppAction::OpenExplorer(ExplorerTrigger::P2PoolConfig)
+                                }
+                                KeyCode::Esc => AppAction::CloseModal,
+                                k => sidebar_nav(k, app),
+                            }
+                        }
+                    }
+
+                    CurrentScreen::Settings => {
+                        if app.settings_view.sidebar_focused {
+                            match key.code {
+                                KeyCode::Enter => {
+                                    app.settings_view.sidebar_focused = false;
                                     AppAction::None
                                 }
                                 k => sidebar_nav(k, app),
                             }
                         } else {
-                            let entries = &app.bitcoin_data;
-                            app.bitcoin_config_view.handle_input(key, entries)
-                        }
-                    } else {
-                        match key.code {
-                            KeyCode::Enter => {
-                                app.bitcoin_config_view.warning_message = None;
-                                AppAction::OpenExplorer(ExplorerTrigger::BitcoinConfig)
-                            }
-                            KeyCode::Esc => AppAction::CloseModal,
-                            k => sidebar_nav(k, app),
+                            app.settings_view.handle_input(key)
                         }
                     }
+
+                    _ => sidebar_nav(key.code, app),
+                };
+
+                if handle_action(action, app)?.is_break() {
+                    return Ok(());
                 }
-
-                // P2Pool config
-                CurrentScreen::P2PoolConfig => {
-                    if app.p2pool_conf_path.is_some() {
-                        if app.p2pool_config_view.sidebar_focused {
-                            match key.code {
-                                KeyCode::Enter => {
-                                    app.p2pool_config_view.sidebar_focused = false;
-                                    AppAction::None
-                                }
-                                k => sidebar_nav(k, app),
-                            }
-                        } else {
-                            // Build flat entry list and delegate to the view
-                            let entries = app
-                                .p2pool_config
-                                .as_ref()
-                                .map(|cfg| flatten_config(cfg))
-                                .unwrap_or_default();
-                            app.p2pool_config_view.handle_input(key, &entries)
-                        }
-                    } else {
-                        match key.code {
-                            KeyCode::Enter => {
-                                app.p2pool_config_view.warning_message = None;
-                                AppAction::OpenExplorer(ExplorerTrigger::P2PoolConfig)
-                            }
-                            KeyCode::Esc => AppAction::CloseModal,
-                            k => sidebar_nav(k, app),
-                        }
-                    }
-                }
-
-                CurrentScreen::Settings => {
-                    if app.settings_view.sidebar_focused {
-                        match key.code {
-                            KeyCode::Enter => {
-                                app.settings_view.sidebar_focused = false;
-                                AppAction::None
-                            }
-                            k => sidebar_nav(k, app),
-                        }
-                    } else {
-                        app.settings_view.handle_input(key)
-                    }
-                }
-
-                _ => sidebar_nav(key.code, app),
-            };
-
-            if handle_action(action, app)?.is_break() {
-                return Ok(());
             }
         }
     }

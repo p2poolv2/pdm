@@ -50,7 +50,8 @@ impl P2PoolStatusView {
                 )),
                 Line::from(format!(
                     "Chain Tip Height       : {}",
-                    info.chain_tip_height.unwrap_or(0)
+                    info.chain_tip_height
+                        .map_or_else(|| "-".to_string(), |h| h.to_string())
                 )),
                 Line::from(format!(
                     "Chain Tip Blockhash    : {}",
