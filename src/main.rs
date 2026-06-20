@@ -28,29 +28,33 @@ use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Setup Terminal
+    let mut app = App::new();
+    app.settings = load_settings();
+    bootstrap_from_settings(&mut app);
+
+    let res = run_terminal_session(&mut app);
+
+    if let Err(err) = &res {
+        eprintln!("Error: {err:#}");
+    }
+
+    Ok(())
+}
+
+fn run_terminal_session(app: &mut App) -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    // Run App
-    let mut app = App::new();
-    app.settings = load_settings();
-    bootstrap_from_settings(&mut app);
-    let res = run_app(&mut terminal, &mut app);
+    let res = run_app(&mut terminal, app);
 
-    // Restore Terminal
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
 
-    if let Err(err) = res {
-        eprintln!("Error: {err:#}");
-    }
-
-    Ok(())
+    res
 }
 
 fn sidebar_nav(key: KeyCode, app: &mut App) -> AppAction {
@@ -67,6 +71,12 @@ fn sidebar_nav(key: KeyCode, app: &mut App) -> AppAction {
     }
 }
 
+enum KeyOutcome {
+    Ignored,
+    Exit,
+    Action(AppAction),
+}
+
 fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Result<()>
 where
     <B as Backend>::Error: Send + Sync + 'static,
@@ -78,141 +88,150 @@ where
 
         if event::poll(Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
-                if key.kind != KeyEventKind::Press {
-                    continue;
-                }
-
-                // Ctrl-C is always a hard exit.
-                // 'q' is suppressed while a text-input field is active.
-                let text_input_active = (app.current_screen == CurrentScreen::BitcoinConfig
-                    && !app.bitcoin_config_view.sidebar_focused
-                    && app.bitcoin_config_view.editing)
-                    || (app.current_screen == CurrentScreen::P2PoolConfig
-                        && !app.p2pool_config_view.sidebar_focused
-                        && app.p2pool_config_view.editing);
-
-                if (key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('c'))
-                    || (!text_input_active && key.code == KeyCode::Char('q'))
-                {
-                    return Ok(());
-                }
-
-                let action = match app.current_screen {
-                    CurrentScreen::FileExplorer => app.explorer.handle_input(key),
-
-                    CurrentScreen::BitcoinStatus => match key.code {
-                        KeyCode::Left => {
-                            if app.bitcoin_status_tab > 0 {
-                                app.bitcoin_status_tab -= 1;
-                            }
-                            AppAction::None
-                        }
-                        KeyCode::Right => {
-                            if app.bitcoin_status_tab < MAX_BITCOIN_STATUS_TAB {
-                                app.bitcoin_status_tab += 1;
-                            }
-                            AppAction::None
-                        }
-                        k => sidebar_nav(k, app),
-                    },
-
-                    CurrentScreen::P2PoolStatus => match key.code {
-                        KeyCode::Left => {
-                            if app.p2pool_status_tab > 0 {
-                                app.p2pool_status_tab -= 1;
-                            }
-                            AppAction::None
-                        }
-                        KeyCode::Right => {
-                            if app.p2pool_status_tab < MAX_P2POOL_STATUS_TAB {
-                                app.p2pool_status_tab += 1;
-                            }
-                            AppAction::None
-                        }
-                        k => sidebar_nav(k, app),
-                    },
-
-                    CurrentScreen::BitcoinConfig => {
-                        if app.bitcoin_conf_path.is_some() {
-                            if app.bitcoin_config_view.sidebar_focused {
-                                match key.code {
-                                    KeyCode::Enter => {
-                                        app.bitcoin_config_view.sidebar_focused = false;
-                                        AppAction::None
-                                    }
-                                    k => sidebar_nav(k, app),
-                                }
-                            } else {
-                                let entries = &app.bitcoin_data;
-                                app.bitcoin_config_view.handle_input(key, entries)
-                            }
-                        } else {
-                            match key.code {
-                                KeyCode::Enter => {
-                                    app.bitcoin_config_view.warning_message = None;
-                                    AppAction::OpenExplorer(ExplorerTrigger::BitcoinConfig)
-                                }
-                                KeyCode::Esc => AppAction::CloseModal,
-                                k => sidebar_nav(k, app),
-                            }
+                match dispatch_key(key, app) {
+                    KeyOutcome::Ignored => {}
+                    KeyOutcome::Exit => return Ok(()),
+                    KeyOutcome::Action(action) => {
+                        if handle_action(action, app)?.is_break() {
+                            return Ok(());
                         }
                     }
-
-                    // P2Pool config
-                    CurrentScreen::P2PoolConfig => {
-                        if app.p2pool_conf_path.is_some() {
-                            if app.p2pool_config_view.sidebar_focused {
-                                match key.code {
-                                    KeyCode::Enter => {
-                                        app.p2pool_config_view.sidebar_focused = false;
-                                        AppAction::None
-                                    }
-                                    k => sidebar_nav(k, app),
-                                }
-                            } else {
-                                // Build flat entry list and delegate to the view
-                                let entries = app
-                                    .p2pool_config
-                                    .as_ref()
-                                    .map(|cfg| flatten_config(cfg))
-                                    .unwrap_or_default();
-                                app.p2pool_config_view.handle_input(key, &entries)
-                            }
-                        } else {
-                            match key.code {
-                                KeyCode::Enter => {
-                                    app.p2pool_config_view.warning_message = None;
-                                    AppAction::OpenExplorer(ExplorerTrigger::P2PoolConfig)
-                                }
-                                KeyCode::Esc => AppAction::CloseModal,
-                                k => sidebar_nav(k, app),
-                            }
-                        }
-                    }
-
-                    CurrentScreen::Settings => {
-                        if app.settings_view.sidebar_focused {
-                            match key.code {
-                                KeyCode::Enter => {
-                                    app.settings_view.sidebar_focused = false;
-                                    AppAction::None
-                                }
-                                k => sidebar_nav(k, app),
-                            }
-                        } else {
-                            app.settings_view.handle_input(key)
-                        }
-                    }
-
-                    _ => sidebar_nav(key.code, app),
-                };
-
-                if handle_action(action, app)?.is_break() {
-                    return Ok(());
                 }
             }
         }
     }
+}
+
+#[allow(clippy::too_many_lines)] // Mirrors the top-level key dispatch table.
+fn dispatch_key(key: event::KeyEvent, app: &mut App) -> KeyOutcome {
+    if key.kind != KeyEventKind::Press {
+        return KeyOutcome::Ignored;
+    }
+
+    // Ctrl-C is always a hard exit.
+    // 'q' is suppressed while a text-input field is active.
+    let text_input_active = (app.current_screen == CurrentScreen::BitcoinConfig
+        && !app.bitcoin_config_view.sidebar_focused
+        && app.bitcoin_config_view.editing)
+        || (app.current_screen == CurrentScreen::P2PoolConfig
+            && !app.p2pool_config_view.sidebar_focused
+            && app.p2pool_config_view.editing);
+
+    if (key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('c'))
+        || (!text_input_active && key.code == KeyCode::Char('q'))
+    {
+        return KeyOutcome::Exit;
+    }
+
+    let action = match app.current_screen {
+        CurrentScreen::FileExplorer => app.explorer.handle_input(key),
+
+        CurrentScreen::BitcoinStatus => match key.code {
+            KeyCode::Left => {
+                if app.bitcoin_status_tab > 0 {
+                    app.bitcoin_status_tab -= 1;
+                }
+                AppAction::None
+            }
+            KeyCode::Right => {
+                if app.bitcoin_status_tab < MAX_BITCOIN_STATUS_TAB {
+                    app.bitcoin_status_tab += 1;
+                }
+                AppAction::None
+            }
+            k => sidebar_nav(k, app),
+        },
+
+        CurrentScreen::P2PoolStatus => match key.code {
+            KeyCode::Left => {
+                if app.p2pool_status_tab > 0 {
+                    app.p2pool_status_tab -= 1;
+                }
+                AppAction::None
+            }
+            KeyCode::Right => {
+                if app.p2pool_status_tab < MAX_P2POOL_STATUS_TAB {
+                    app.p2pool_status_tab += 1;
+                }
+                AppAction::None
+            }
+            k => sidebar_nav(k, app),
+        },
+
+        CurrentScreen::BitcoinConfig => {
+            if app.bitcoin_conf_path.is_some() {
+                if app.bitcoin_config_view.sidebar_focused {
+                    match key.code {
+                        KeyCode::Enter => {
+                            app.bitcoin_config_view.sidebar_focused = false;
+                            AppAction::None
+                        }
+                        k => sidebar_nav(k, app),
+                    }
+                } else {
+                    let entries = &app.bitcoin_data;
+                    app.bitcoin_config_view.handle_input(key, entries)
+                }
+            } else {
+                match key.code {
+                    KeyCode::Enter => {
+                        app.bitcoin_config_view.warning_message = None;
+                        AppAction::OpenExplorer(ExplorerTrigger::BitcoinConfig)
+                    }
+                    KeyCode::Esc => AppAction::CloseModal,
+                    k => sidebar_nav(k, app),
+                }
+            }
+        }
+
+        CurrentScreen::P2PoolConfig => {
+            if app.p2pool_conf_path.is_some() {
+                if app.p2pool_config_view.sidebar_focused {
+                    match key.code {
+                        KeyCode::Enter => {
+                            app.p2pool_config_view.sidebar_focused = false;
+                            AppAction::None
+                        }
+                        k => sidebar_nav(k, app),
+                    }
+                } else {
+                    let entries = app
+                        .p2pool_config
+                        .as_ref()
+                        .map(|cfg| flatten_config(cfg))
+                        .unwrap_or_default();
+                    app.p2pool_config_view.handle_input(key, &entries)
+                }
+            } else {
+                match key.code {
+                    KeyCode::Enter => {
+                        app.p2pool_config_view.warning_message = None;
+                        AppAction::OpenExplorer(ExplorerTrigger::P2PoolConfig)
+                    }
+                    KeyCode::Esc => AppAction::CloseModal,
+                    k => sidebar_nav(k, app),
+                }
+            }
+        }
+
+        CurrentScreen::Settings => {
+            if app.settings_view.sidebar_focused {
+                match key.code {
+                    KeyCode::Enter => {
+                        app.settings_view.sidebar_focused = false;
+                        AppAction::None
+                    }
+                    k => sidebar_nav(k, app),
+                }
+            } else {
+                app.settings_view.handle_input(key)
+            }
+        }
+
+        _ => sidebar_nav(key.code, app),
+    };
+
+    KeyOutcome::Action(action)
 }
 
 /// Pre-populate app state from `app.settings`. Called once at startup after
@@ -619,6 +638,14 @@ mod tests {
         let _ = handle_action(action, app).unwrap();
     }
 
+    fn press(code: KeyCode) -> crossterm::event::KeyEvent {
+        crossterm::event::KeyEvent::new(code, KeyModifiers::empty())
+    }
+
+    fn press_with(code: KeyCode, modifiers: KeyModifiers) -> crossterm::event::KeyEvent {
+        crossterm::event::KeyEvent::new(code, modifiers)
+    }
+
     /// Write a  p2pool TOML to `path`.
     fn write_valid_p2pool_toml(path: &std::path::Path) {
         std::fs::write(
@@ -733,6 +760,475 @@ port = 46884
 "#,
         )
         .unwrap();
+    }
+
+    #[test]
+    fn dispatch_key_ignores_non_press_events() {
+        use crossterm::event::{KeyEvent, KeyEventKind};
+
+        let mut app = App::new();
+        let mut release = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::empty());
+        release.kind = KeyEventKind::Release;
+
+        assert!(matches!(
+            dispatch_key(release, &mut app),
+            KeyOutcome::Ignored
+        ));
+    }
+
+    #[test]
+    fn dispatch_key_ctrl_c_always_exits() {
+        let mut app = App::new();
+        let key = press_with(KeyCode::Char('c'), KeyModifiers::CONTROL);
+
+        assert!(matches!(dispatch_key(key, &mut app), KeyOutcome::Exit));
+    }
+
+    #[test]
+    fn dispatch_key_q_exits_when_not_text_input_active() {
+        let mut app = App::new();
+
+        assert!(matches!(
+            dispatch_key(press(KeyCode::Char('q')), &mut app),
+            KeyOutcome::Exit
+        ));
+    }
+
+    #[test]
+    fn dispatch_key_q_suppressed_while_editing_bitcoin_config() {
+        let mut app = App::new();
+        app.current_screen = CurrentScreen::BitcoinConfig;
+        app.bitcoin_conf_path = Some(std::path::PathBuf::from("/tmp/bitcoin.conf"));
+        app.bitcoin_config_view.sidebar_focused = false;
+        app.bitcoin_config_view.editing = true;
+
+        let outcome = dispatch_key(press(KeyCode::Char('q')), &mut app);
+
+        assert!(!matches!(outcome, KeyOutcome::Exit));
+    }
+
+    #[test]
+    fn dispatch_key_q_suppressed_while_editing_p2pool_config() {
+        let mut app = App::new();
+        app.current_screen = CurrentScreen::P2PoolConfig;
+        app.p2pool_config_view.sidebar_focused = false;
+        app.p2pool_config_view.editing = true;
+
+        let outcome = dispatch_key(press(KeyCode::Char('q')), &mut app);
+
+        assert!(!matches!(outcome, KeyOutcome::Exit));
+    }
+
+    #[test]
+    fn dispatch_key_q_exits_on_bitcoin_config_when_sidebar_focused() {
+        let mut app = App::new();
+        app.current_screen = CurrentScreen::BitcoinConfig;
+        app.bitcoin_config_view.sidebar_focused = true;
+        app.bitcoin_config_view.editing = true;
+
+        assert!(matches!(
+            dispatch_key(press(KeyCode::Char('q')), &mut app),
+            KeyOutcome::Exit
+        ));
+    }
+
+    #[test]
+    fn dispatch_key_bitcoin_status_left_decrements_above_zero() {
+        let mut app = App::new();
+        app.current_screen = CurrentScreen::BitcoinStatus;
+        app.bitcoin_status_tab = 1;
+
+        dispatch_key(press(KeyCode::Left), &mut app);
+
+        assert_eq!(app.bitcoin_status_tab, 0);
+    }
+
+    #[test]
+    fn dispatch_key_bitcoin_status_left_floors_at_zero() {
+        let mut app = App::new();
+        app.current_screen = CurrentScreen::BitcoinStatus;
+        app.bitcoin_status_tab = 0;
+
+        dispatch_key(press(KeyCode::Left), &mut app);
+
+        assert_eq!(app.bitcoin_status_tab, 0);
+    }
+
+    #[test]
+    fn dispatch_key_bitcoin_status_right_increments_below_max() {
+        let mut app = App::new();
+        app.current_screen = CurrentScreen::BitcoinStatus;
+        app.bitcoin_status_tab = 0;
+
+        dispatch_key(press(KeyCode::Right), &mut app);
+
+        assert_eq!(app.bitcoin_status_tab, 1);
+    }
+
+    #[test]
+    fn dispatch_key_bitcoin_status_right_ceils_at_max() {
+        let mut app = App::new();
+        app.current_screen = CurrentScreen::BitcoinStatus;
+        app.bitcoin_status_tab = MAX_BITCOIN_STATUS_TAB;
+
+        dispatch_key(press(KeyCode::Right), &mut app);
+
+        assert_eq!(app.bitcoin_status_tab, MAX_BITCOIN_STATUS_TAB);
+    }
+
+    #[test]
+    fn dispatch_key_bitcoin_status_other_key_falls_back_to_sidebar_nav() {
+        let mut app = App::new();
+        app.current_screen = CurrentScreen::BitcoinStatus;
+        app.sidebar_index = 0;
+
+        let outcome = dispatch_key(press(KeyCode::Down), &mut app);
+
+        assert_eq!(app.sidebar_index, 1);
+        assert!(matches!(outcome, KeyOutcome::Action(AppAction::ToggleMenu)));
+    }
+
+    #[test]
+    fn dispatch_key_p2pool_status_left_decrements_above_zero() {
+        let mut app = App::new();
+        app.current_screen = CurrentScreen::P2PoolStatus;
+        app.p2pool_status_tab = 1;
+
+        dispatch_key(press(KeyCode::Left), &mut app);
+
+        assert_eq!(app.p2pool_status_tab, 0);
+    }
+
+    #[test]
+    fn dispatch_key_p2pool_status_left_floors_at_zero() {
+        let mut app = App::new();
+        app.current_screen = CurrentScreen::P2PoolStatus;
+        app.p2pool_status_tab = 0;
+
+        dispatch_key(press(KeyCode::Left), &mut app);
+
+        assert_eq!(app.p2pool_status_tab, 0);
+    }
+
+    #[test]
+    fn dispatch_key_p2pool_status_right_increments_below_max() {
+        let mut app = App::new();
+        app.current_screen = CurrentScreen::P2PoolStatus;
+        app.p2pool_status_tab = 0;
+
+        dispatch_key(press(KeyCode::Right), &mut app);
+
+        assert_eq!(app.p2pool_status_tab, 1);
+    }
+
+    #[test]
+    fn dispatch_key_p2pool_status_right_ceils_at_max() {
+        let mut app = App::new();
+        app.current_screen = CurrentScreen::P2PoolStatus;
+        app.p2pool_status_tab = MAX_P2POOL_STATUS_TAB;
+
+        dispatch_key(press(KeyCode::Right), &mut app);
+
+        assert_eq!(app.p2pool_status_tab, MAX_P2POOL_STATUS_TAB);
+    }
+
+    #[test]
+    fn dispatch_key_file_explorer_delegates_to_explorer() {
+        let mut app = App::new();
+        app.current_screen = CurrentScreen::FileExplorer;
+        app.explorer.load_directory();
+
+        let outcome = dispatch_key(press(KeyCode::Down), &mut app);
+
+        assert!(matches!(outcome, KeyOutcome::Action(_)));
+    }
+
+    #[test]
+    fn dispatch_key_bitcoin_config_sidebar_focused_enter_unfocuses() {
+        let mut app = App::new();
+        app.current_screen = CurrentScreen::BitcoinConfig;
+        app.bitcoin_conf_path = Some(std::path::PathBuf::from("/tmp/bitcoin.conf"));
+        app.bitcoin_config_view.sidebar_focused = true;
+
+        let outcome = dispatch_key(press(KeyCode::Enter), &mut app);
+
+        assert!(!app.bitcoin_config_view.sidebar_focused);
+        assert!(matches!(outcome, KeyOutcome::Action(AppAction::None)));
+    }
+
+    #[test]
+    fn dispatch_key_bitcoin_config_sidebar_focused_other_key_navigates_sidebar() {
+        let mut app = App::new();
+        app.current_screen = CurrentScreen::BitcoinConfig;
+        app.bitcoin_conf_path = Some(std::path::PathBuf::from("/tmp/bitcoin.conf"));
+        app.bitcoin_config_view.sidebar_focused = true;
+        app.sidebar_index = 1;
+
+        dispatch_key(press(KeyCode::Down), &mut app);
+
+        assert_eq!(app.sidebar_index, 2);
+    }
+
+    #[test]
+    fn dispatch_key_bitcoin_config_not_focused_delegates_to_view() {
+        use pdm::bitcoin_config::ConfigEntry;
+
+        let mut app = App::new();
+        app.current_screen = CurrentScreen::BitcoinConfig;
+        app.bitcoin_conf_path = Some(std::path::PathBuf::from("/tmp/bitcoin.conf"));
+        app.bitcoin_config_view.sidebar_focused = false;
+        app.bitcoin_data = vec![ConfigEntry {
+            key: "rpcuser".to_string(),
+            value: "old".to_string(),
+            enabled: true,
+            schema: None,
+            section: None,
+        }];
+
+        dispatch_key(press(KeyCode::Esc), &mut app);
+
+        assert!(app.bitcoin_config_view.sidebar_focused);
+    }
+
+    #[test]
+    fn dispatch_key_bitcoin_config_no_path_enter_opens_explorer() {
+        let mut app = App::new();
+        app.current_screen = CurrentScreen::BitcoinConfig;
+        app.bitcoin_conf_path = None;
+        app.bitcoin_config_view.warning_message = Some("stale".to_string());
+
+        let outcome = dispatch_key(press(KeyCode::Enter), &mut app);
+
+        assert!(app.bitcoin_config_view.warning_message.is_none());
+        assert!(matches!(
+            outcome,
+            KeyOutcome::Action(AppAction::OpenExplorer(ExplorerTrigger::BitcoinConfig))
+        ));
+    }
+
+    #[test]
+    fn dispatch_key_bitcoin_config_no_path_esc_closes_modal() {
+        let mut app = App::new();
+        app.current_screen = CurrentScreen::BitcoinConfig;
+        app.bitcoin_conf_path = None;
+
+        let outcome = dispatch_key(press(KeyCode::Esc), &mut app);
+
+        assert!(matches!(outcome, KeyOutcome::Action(AppAction::CloseModal)));
+    }
+
+    #[test]
+    fn dispatch_key_bitcoin_config_no_path_other_key_navigates_sidebar() {
+        let mut app = App::new();
+        app.current_screen = CurrentScreen::BitcoinConfig;
+        app.bitcoin_conf_path = None;
+        app.sidebar_index = 1;
+
+        dispatch_key(press(KeyCode::Up), &mut app);
+
+        assert_eq!(app.sidebar_index, 0);
+    }
+
+    #[test]
+    fn dispatch_key_p2pool_config_sidebar_focused_enter_unfocuses() {
+        let mut app = App::new();
+        app.current_screen = CurrentScreen::P2PoolConfig;
+        app.p2pool_conf_path = Some(std::path::PathBuf::from("/tmp/p2pool.toml"));
+        app.p2pool_config_view.sidebar_focused = true;
+
+        dispatch_key(press(KeyCode::Enter), &mut app);
+
+        assert!(!app.p2pool_config_view.sidebar_focused);
+    }
+
+    #[test]
+    fn dispatch_key_p2pool_config_not_focused_uses_flattened_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("p2pool.toml");
+        write_valid_p2pool_toml(&file);
+        let cfg = P2PoolConfig::load(file.to_str().unwrap()).unwrap();
+
+        let mut app = App::new();
+        app.current_screen = CurrentScreen::P2PoolConfig;
+        app.p2pool_conf_path = Some(file);
+        app.p2pool_config = Some(cfg);
+        app.p2pool_config_view.sidebar_focused = false;
+
+        let outcome = dispatch_key(press(KeyCode::Down), &mut app);
+
+        assert!(matches!(outcome, KeyOutcome::Action(_)));
+    }
+
+    #[test]
+    fn dispatch_key_p2pool_config_no_path_enter_opens_explorer() {
+        let mut app = App::new();
+        app.current_screen = CurrentScreen::P2PoolConfig;
+        app.p2pool_conf_path = None;
+        app.p2pool_config_view.warning_message = Some("stale".to_string());
+
+        let outcome = dispatch_key(press(KeyCode::Enter), &mut app);
+
+        assert!(app.p2pool_config_view.warning_message.is_none());
+        assert!(matches!(
+            outcome,
+            KeyOutcome::Action(AppAction::OpenExplorer(ExplorerTrigger::P2PoolConfig))
+        ));
+    }
+
+    #[test]
+    fn dispatch_key_p2pool_config_no_path_esc_closes_modal() {
+        let mut app = App::new();
+        app.current_screen = CurrentScreen::P2PoolConfig;
+        app.p2pool_conf_path = None;
+
+        let outcome = dispatch_key(press(KeyCode::Esc), &mut app);
+
+        assert!(matches!(outcome, KeyOutcome::Action(AppAction::CloseModal)));
+    }
+
+    #[test]
+    fn dispatch_key_p2pool_config_no_path_other_key_navigates_sidebar() {
+        let mut app = App::new();
+        app.current_screen = CurrentScreen::P2PoolConfig;
+        app.p2pool_conf_path = None;
+        app.sidebar_index = 1;
+
+        dispatch_key(press(KeyCode::Down), &mut app);
+
+        assert_eq!(app.sidebar_index, 2);
+    }
+
+    #[test]
+    fn dispatch_key_settings_sidebar_focused_enter_unfocuses() {
+        let mut app = App::new();
+        app.current_screen = CurrentScreen::Settings;
+        app.settings_view.sidebar_focused = true;
+
+        let outcome = dispatch_key(press(KeyCode::Enter), &mut app);
+
+        assert!(!app.settings_view.sidebar_focused);
+        assert!(matches!(outcome, KeyOutcome::Action(AppAction::None)));
+    }
+
+    #[test]
+    fn dispatch_key_settings_sidebar_focused_respects_max_index() {
+        let mut app = App::new();
+        app.current_screen = CurrentScreen::Settings;
+        app.settings_view.sidebar_focused = true;
+        app.sidebar_index = MAX_SIDEBAR_INDEX;
+
+        dispatch_key(press(KeyCode::Down), &mut app);
+
+        assert_eq!(app.sidebar_index, MAX_SIDEBAR_INDEX);
+    }
+
+    #[test]
+    fn dispatch_key_settings_not_focused_delegates_to_settings_view() {
+        let mut app = App::new();
+        app.current_screen = CurrentScreen::Settings;
+        app.settings_view.sidebar_focused = false;
+
+        let outcome = dispatch_key(press(KeyCode::Down), &mut app);
+
+        assert!(matches!(outcome, KeyOutcome::Action(_)));
+    }
+
+    #[test]
+    fn dispatch_key_default_screen_falls_back_to_sidebar_nav() {
+        let mut app = App::new();
+        app.sidebar_index = 0;
+
+        let outcome = dispatch_key(press(KeyCode::Down), &mut app);
+
+        assert_eq!(app.sidebar_index, 1);
+        assert!(matches!(outcome, KeyOutcome::Action(AppAction::ToggleMenu)));
+    }
+
+    #[test]
+    #[serial]
+    fn file_selected_for_settings_field_0_invalid_bitcoin_config_sets_error() {
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        redirect_saves_to(&dir);
+        let path = dir.path().join("not_a_config.conf");
+        std::fs::write(&path, "unknownkey=somevalue\n").unwrap();
+
+        let mut app = App::new();
+        app.explorer_trigger = Some(ExplorerTrigger::Settings(0));
+
+        run(AppAction::FileSelected(path), &mut app);
+
+        assert_eq!(
+            app.settings_view.save_error.as_deref(),
+            Some("File does not appear to be a Bitcoin config.")
+        );
+        assert!(app.settings.bitcoin_conf_path.is_none());
+        assert_eq!(app.current_screen, CurrentScreen::Settings);
+    }
+
+    #[test]
+    #[serial]
+    fn file_selected_for_settings_field_0_missing_path_sets_invalid_config_error() {
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        redirect_saves_to(&dir);
+        let missing_path = dir.path().join("does_not_exist.conf");
+
+        let mut app = App::new();
+        app.explorer_trigger = Some(ExplorerTrigger::Settings(0));
+
+        run(AppAction::FileSelected(missing_path), &mut app);
+
+        assert_eq!(
+            app.settings_view.save_error.as_deref(),
+            Some("File does not appear to be a Bitcoin config.")
+        );
+        assert!(app.settings.bitcoin_conf_path.is_none());
+    }
+
+    #[test]
+    #[serial]
+    fn file_selected_for_settings_field_1_invalid_hostname_sets_error() {
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        redirect_saves_to(&dir);
+        let path = dir.path().join("p2pool.toml");
+        write_empty_hostname_toml(&path);
+
+        let mut app = App::new();
+        app.explorer_trigger = Some(ExplorerTrigger::Settings(1));
+
+        run(AppAction::FileSelected(path), &mut app);
+
+        assert_eq!(
+            app.settings_view.save_error.as_deref(),
+            Some("Config appears invalid: stratum.hostname is empty.")
+        );
+        assert!(app.settings.p2pool_conf_path.is_none());
+        assert!(app.p2pool_config.is_none());
+    }
+
+    #[test]
+    #[serial]
+    fn file_selected_for_settings_field_1_load_failure_sets_error() {
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        redirect_saves_to(&dir);
+        let path = dir.path().join("bad.toml");
+        std::fs::write(&path, "invalid === toml").unwrap();
+
+        let mut app = App::new();
+        app.explorer_trigger = Some(ExplorerTrigger::Settings(1));
+
+        run(AppAction::FileSelected(path), &mut app);
+
+        let err = app.settings_view.save_error.expect("expected a save error");
+        assert!(err.starts_with("Failed to load P2Pool config:"));
+        assert!(app.settings.p2pool_conf_path.is_none());
     }
 
     #[test]
@@ -1248,17 +1744,13 @@ port = 46884
 
         let dir = tempdir().unwrap();
         let path = dir.path().join("p2pool.toml");
-        // Write a minimal but syntactically valid TOML file; P2PoolConfig::load
-        // may fail to parse it, but bootstrap_from_settings should at least set
-        // app.p2pool_conf_path regardless of whether the config is parseable.
-        let cfg = write_valid_p2pool_toml(&path);
+        write_valid_p2pool_toml(&path);
 
         let mut app = App::new();
         app.settings.p2pool_conf_path = Some(path.clone());
 
         bootstrap_from_settings(&mut app);
 
-        // The path must always be set, even if the config fails to parse.
         assert_eq!(app.p2pool_conf_path, Some(path));
     }
 
@@ -1291,7 +1783,7 @@ port = 46884
         let dir = tempdir().unwrap();
         redirect_saves_to(&dir);
         let path = dir.path().join("p2pool.toml");
-        let cfg = write_valid_p2pool_toml(&path);
+        write_valid_p2pool_toml(&path);
 
         let mut app = App::new();
         app.explorer_trigger = Some(ExplorerTrigger::Settings(1));
