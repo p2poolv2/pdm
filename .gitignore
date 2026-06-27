@@ -1,2 +1,3 @@
-/target
-./src/snapshots
+/target/
+src/snapshots/
+config/config.toml

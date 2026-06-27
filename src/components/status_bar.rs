@@ -108,7 +108,7 @@ impl StatusBar {
                     spans.extend(hint("Esc", "Back"));
                 }
             }
-            CurrentScreen::BitcoinStatus => {
+            CurrentScreen::BitcoinStatus | CurrentScreen::P2PoolStatus => {
                 spans.extend(hint("↑↓", "Navigate sidebar"));
                 spans.extend(hint("←→", "Switch tab"));
                 spans.extend(hint("q", "Quit"));

@@ -1,0 +1,5 @@
+[api]
+host = "127.0.0.1"
+port = 46884
+auth_user = "p2pool"
+auth_pass = "p2pool"

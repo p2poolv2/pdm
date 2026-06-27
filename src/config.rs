@@ -20,7 +20,7 @@ pub fn load_api_config() -> Result<ApiConfig> {
         .build()?;
 
     let host: String = settings.get("api.host").unwrap_or("127.0.0.1".into());
-    let port: u16 = settings.get("api.port").unwrap_or(9332);
+    let port: u16 = settings.get("api.port").unwrap_or(46884);
     let auth_user: Option<String> = settings.get("api.auth_user").ok();
     let auth_pass: Option<String> = settings.get("api.auth_pass").ok();
 
