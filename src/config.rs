@@ -6,7 +6,7 @@ use anyhow::Result;
 use config::{Config, File};
 
 const DEFAULT_API_HOST: &str = "127.0.0.1";
-const DEFAULT_API_PORT: u16 = 9332;
+const DEFAULT_API_PORT: u16 = 46884;
 
 #[derive(Debug, Clone)]
 pub struct ApiConfig {

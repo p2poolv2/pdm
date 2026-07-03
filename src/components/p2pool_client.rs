@@ -158,12 +158,12 @@ impl P2PoolClient {
         {
             Ok(data) => Ok(data),
             Err(error) => {
-                if self.should_try_fallback(&error) {
-                    if let Some(fallback_base_url) = &self.fallback_base_url {
-                        return self
-                            .fetch_json_from_base_url(fallback_base_url, path, query, false)
-                            .await;
-                    }
+                if self.should_try_fallback(&error)
+                    && let Some(fallback_base_url) = &self.fallback_base_url
+                {
+                    return self
+                        .fetch_json_from_base_url(fallback_base_url, path, query, false)
+                        .await;
                 }
                 Err(error)
             }
@@ -187,10 +187,8 @@ impl P2PoolClient {
             request = request.query(query);
         }
 
-        if use_auth {
-            if let Some((user, pass)) = &self.auth_credentials {
-                request = request.basic_auth(user, Some(pass));
-            }
+        if use_auth && let Some((user, pass)) = &self.auth_credentials {
+            request = request.basic_auth(user, Some(pass));
         }
 
         let response = request.send().await?.error_for_status()?;

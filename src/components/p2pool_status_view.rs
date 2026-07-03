@@ -332,7 +332,7 @@ impl P2PoolStatusView {
             return "-".to_string();
         }
 
-        let difficulty = (0x00ff_ff_u32 as f64 / mantissa as f64) * 256_f64.powi(0x1d - exponent);
+        let difficulty = (0x0000_ffff_u32 as f64 / mantissa as f64) * 256_f64.powi(0x1d - exponent);
         if !difficulty.is_finite() || difficulty <= 0.0 {
             return "-".to_string();
         }
@@ -430,8 +430,14 @@ impl Default for P2PoolStatusView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::components::p2pool_client::{ChainInfo, PeerInfo};
+    use crate::components::p2pool_client::{
+        ChainInfo, PeerInfo, ShareInfo, SharesResponse, UncleInfo,
+    };
+    use crate::components::p2pool_websocket::{LivePeerEvent, LiveShare};
     use ratatui::{Terminal, backend::TestBackend, prelude::Rect};
+
+    const SHARE_TAB: usize = 1;
+    const PEER_TAB: usize = 2;
 
     fn render_view(app: &App) -> String {
         let backend = TestBackend::new(100, 25);
@@ -451,6 +457,61 @@ mod tests {
             .collect()
     }
 
+    fn share_info(
+        height: u64,
+        blockhash: &str,
+        miner_address: &str,
+        timestamp: u64,
+        bits: &str,
+        uncle_count: usize,
+    ) -> ShareInfo {
+        ShareInfo {
+            blockhash: blockhash.to_string(),
+            prev_blockhash: format!("{blockhash}-prev"),
+            height,
+            miner_address: miner_address.to_string(),
+            timestamp,
+            bits: bits.to_string(),
+            uncles: (0..uncle_count)
+                .map(|index| UncleInfo {
+                    blockhash: format!("{blockhash}-uncle-{index}"),
+                    prev_blockhash: format!("{blockhash}-uncle-prev-{index}"),
+                    miner_address: miner_address.to_string(),
+                    timestamp,
+                    height,
+                })
+                .collect(),
+        }
+    }
+
+    fn live_share(
+        height: u64,
+        blockhash: &str,
+        miner_address: &str,
+        timestamp: u64,
+        bits: &str,
+        uncle_count: usize,
+    ) -> LiveShare {
+        LiveShare {
+            blockhash: blockhash.to_string(),
+            prev_blockhash: format!("{blockhash}-prev"),
+            height,
+            miner_address: miner_address.to_string(),
+            timestamp,
+            bits: bits.to_string(),
+            uncles: (0..uncle_count)
+                .map(|index| format!("{blockhash}-uncle-{index}"))
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn default_constructs_status_view() {
+        let view = P2PoolStatusView;
+
+        assert_eq!(format!("{view:?}"), "P2PoolStatusView");
+    }
+
     #[test]
     fn render_dispatches_chain_info_for_tab_zero() {
         let app = App::new();
@@ -461,9 +522,78 @@ mod tests {
     }
 
     #[test]
-    fn render_dispatches_peer_info_for_tab_one() {
+    fn render_dispatches_share_info_for_tab_one() {
         let mut app = App::new();
-        app.p2pool_status_tab = 1;
+        app.p2pool_status_tab = SHARE_TAB;
+
+        let output = render_view(&app);
+
+        assert!(output.contains("Difficulty"));
+        assert!(output.contains("Uncles"));
+    }
+
+    #[test]
+    fn render_share_info_lists_api_and_live_shares_without_duplicates() {
+        let mut app = App::new();
+        app.p2pool_status_tab = SHARE_TAB;
+        app.live_shares = vec![live_share(
+            42,
+            "livehash",
+            "olderlive",
+            1_700_000_000,
+            "1d00ffff",
+            1,
+        )];
+        app.share_info = Some(SharesResponse {
+            from_height: 40,
+            to_height: 42,
+            shares: vec![
+                share_info(42, "apihash", "newerapi", 1_700_000_060, "1e00ffff", 2),
+                share_info(41, "livehash", "dupeapi", 1_700_000_120, "1d00ffff", 0),
+            ],
+        });
+
+        let output = render_view(&app);
+
+        assert!(output.contains("newerapi"));
+        assert!(output.contains("olderlive"));
+        assert!(!output.contains("dupeapi"));
+        assert!(output.contains("0.0039"));
+        assert!(output.contains("1.00"));
+        assert!(output.contains("11/14/2023, 10:14:20 PM"));
+        assert!(output.find("newerapi").unwrap() < output.find("olderlive").unwrap());
+    }
+
+    #[test]
+    fn render_share_info_shows_recent_share_error_before_live_error() {
+        let mut app = App::new();
+        app.p2pool_status_tab = SHARE_TAB;
+        app.p2pool_share_info_error = Some("recent fetch failed".to_string());
+        app.p2pool_live_error = Some("websocket closed".to_string());
+
+        let output = render_view(&app);
+
+        assert!(output.contains("Recent"));
+        assert!(!output.contains("Live sh"));
+        assert!(!output.contains("Waiting"));
+    }
+
+    #[test]
+    fn render_share_info_shows_live_error_when_recent_fetch_has_not_failed() {
+        let mut app = App::new();
+        app.p2pool_status_tab = SHARE_TAB;
+        app.p2pool_live_error = Some("websocket closed".to_string());
+
+        let output = render_view(&app);
+
+        assert!(output.contains("Live sh"));
+        assert!(!output.contains("Waiting"));
+    }
+
+    #[test]
+    fn render_dispatches_peer_info_for_tab_two() {
+        let mut app = App::new();
+        app.p2pool_status_tab = PEER_TAB;
 
         let output = render_view(&app);
 
@@ -535,7 +665,7 @@ mod tests {
     #[test]
     fn render_peer_info_shows_loading_state_with_no_data() {
         let mut app = App::new();
-        app.p2pool_status_tab = 1;
+        app.p2pool_status_tab = PEER_TAB;
 
         let output = render_view(&app);
 
@@ -545,7 +675,7 @@ mod tests {
     #[test]
     fn render_peer_info_shows_error_when_fetch_failed() {
         let mut app = App::new();
-        app.p2pool_status_tab = 1;
+        app.p2pool_status_tab = PEER_TAB;
         app.p2pool_peer_info_error = Some("request timed out".to_string());
 
         let output = render_view(&app);
@@ -557,7 +687,7 @@ mod tests {
     #[test]
     fn render_peer_info_shows_empty_state_when_no_peers_are_connected() {
         let mut app = App::new();
-        app.p2pool_status_tab = 1;
+        app.p2pool_status_tab = PEER_TAB;
         app.peer_info = Some(Vec::new());
 
         let output = render_view(&app);
@@ -568,7 +698,7 @@ mod tests {
     #[test]
     fn render_peer_info_lists_connected_peers_with_statuses() {
         let mut app = App::new();
-        app.p2pool_status_tab = 1;
+        app.p2pool_status_tab = PEER_TAB;
         app.peer_info = Some(vec![
             PeerInfo {
                 peer_id: "12D3KooWPeerOne".to_string(),
@@ -588,9 +718,33 @@ mod tests {
     }
 
     #[test]
+    fn render_peer_info_appends_live_error_and_recent_peer_events() {
+        let mut app = App::new();
+        app.p2pool_status_tab = PEER_TAB;
+        app.peer_info = Some(Vec::new());
+        app.p2pool_live_error = Some("websocket closed".to_string());
+        app.live_peer_events = (1..=9)
+            .map(|index| LivePeerEvent {
+                peer_id: format!("12D3KooWPeerEvent{index}"),
+                status: format!("Status{index}"),
+            })
+            .collect();
+
+        let output = render_view(&app);
+
+        assert!(output.contains("No connected peers"));
+        assert!(output.contains("Live stream error: websocket closed"));
+        assert!(output.contains("Live Peer Events"));
+        assert!(output.contains("Status9: 12D3KooWPeerEvent9"));
+        assert!(output.contains("Status2: 12D3KooWPeerEvent2"));
+        assert!(!output.contains("Status1: 12D3KooWPeerEvent1"));
+        assert!(output.find("Status9").unwrap() < output.find("Status2").unwrap());
+    }
+
+    #[test]
     fn render_peer_info_defaults_missing_status_to_connected() {
         let mut app = App::new();
-        app.p2pool_status_tab = 1;
+        app.p2pool_status_tab = PEER_TAB;
         app.peer_info = Some(vec![PeerInfo {
             peer_id: "12D3KooWNoStatus".to_string(),
             status: None,
@@ -600,5 +754,55 @@ mod tests {
 
         assert!(output.contains("Connected Peers        : 1"));
         assert!(output.contains("12D3KooWNoStatus (Connected)"));
+    }
+
+    #[test]
+    fn short_value_preserves_short_values_and_truncates_long_values() {
+        assert_eq!(P2PoolStatusView::short_value("short", 10), "short");
+        assert_eq!(
+            P2PoolStatusView::short_value("abcdefghijklmnop", 10),
+            "abc...mnop"
+        );
+        assert_eq!(P2PoolStatusView::short_value("abcdef", 3), "abc");
+    }
+
+    #[test]
+    fn format_difficulty_formats_valid_bits_values() {
+        assert_eq!(P2PoolStatusView::format_difficulty("1d00ffff"), "1.00");
+        assert_eq!(P2PoolStatusView::format_difficulty("486604799"), "1.00");
+        assert_eq!(P2PoolStatusView::format_difficulty("0X1D00FFFF"), "1.00");
+        assert_eq!(P2PoolStatusView::format_difficulty("1b00ffff"), "65,536");
+        assert_eq!(P2PoolStatusView::format_difficulty("1e00ffff"), "0.0039");
+    }
+
+    #[test]
+    fn format_difficulty_handles_invalid_or_unusable_bits() {
+        assert_eq!(P2PoolStatusView::format_difficulty(""), "");
+        assert_eq!(
+            P2PoolStatusView::format_difficulty("not-a-compact-bits-value"),
+            "not...alue"
+        );
+        assert_eq!(P2PoolStatusView::format_difficulty("1d000000"), "-");
+        assert_eq!(P2PoolStatusView::format_difficulty("ff00ffff"), "-");
+    }
+
+    #[test]
+    fn format_timestamp_formats_seconds_and_milliseconds() {
+        assert_eq!(
+            P2PoolStatusView::format_timestamp(0),
+            "1/1/1970, 12:00:00 AM"
+        );
+        assert_eq!(
+            P2PoolStatusView::format_timestamp(43_200),
+            "1/1/1970, 12:00:00 PM"
+        );
+        assert_eq!(
+            P2PoolStatusView::format_timestamp(1_700_000_000),
+            "11/14/2023, 10:13:20 PM"
+        );
+        assert_eq!(
+            P2PoolStatusView::format_timestamp(1_700_000_000_000),
+            "11/14/2023, 10:13:20 PM"
+        );
     }
 }

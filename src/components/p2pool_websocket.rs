@@ -130,34 +130,58 @@ impl P2PoolWebSocketClient {
 
     fn ws_url_with_auth(&self, path: &str) -> Result<Url> {
         let mut url = self.ws_url(path)?;
+        self.apply_auth(&mut url);
+        Ok(url)
+    }
+
+    fn ws_urls_with_auth(&self, path: &str) -> Result<Vec<Url>> {
+        let mut urls = vec![self.ws_url_with_auth(path)?];
+        if urls[0].scheme() == "ws" {
+            let mut wss_url = self.ws_url(path)?;
+            self.apply_auth(&mut wss_url);
+            wss_url.set_scheme("wss").unwrap();
+            urls.push(wss_url);
+        }
+        Ok(urls)
+    }
+
+    fn apply_auth(&self, url: &mut Url) {
         if let Some((user, pass)) = &self.auth_credentials {
             let token = STANDARD.encode(format!("{}:{}", user, pass));
             url.query_pairs_mut().append_pair("token", &token);
         }
-        Ok(url)
     }
 
     pub async fn subscribe_live_events(
         &self,
         tx: mpsc::UnboundedSender<anyhow::Result<LiveP2PoolEvent>>,
     ) -> anyhow::Result<()> {
-        let url = self.ws_url_with_auth("/ws")?;
-        match self.subscribe_live_events_at(url, tx.clone()).await {
-            Ok(()) => Ok(()),
-            Err(primary_error) => {
-                if let Some(fallback_base_url) = &self.fallback_base_url {
-                    let fallback_url = self.ws_url_from_base_url(fallback_base_url, "/ws")?;
-                    if self
-                        .subscribe_live_events_at(fallback_url, tx)
-                        .await
-                        .is_ok()
-                    {
-                        return Ok(());
+        let urls = self.ws_urls_with_auth("/ws")?;
+        let mut primary_error = None;
+
+        for url in urls {
+            match self.subscribe_live_events_at(url, tx.clone()).await {
+                Ok(()) => return Ok(()),
+                Err(error) => {
+                    if primary_error.is_none() {
+                        primary_error = Some(error);
                     }
                 }
-                Err(primary_error)
             }
         }
+
+        if let Some(fallback_base_url) = &self.fallback_base_url {
+            let fallback_url = self.ws_url_from_base_url(fallback_base_url, "/ws")?;
+            if self
+                .subscribe_live_events_at(fallback_url, tx)
+                .await
+                .is_ok()
+            {
+                return Ok(());
+            }
+        }
+
+        Err(primary_error.unwrap_or_else(|| anyhow::anyhow!("websocket connection failed")))
     }
 
     async fn subscribe_live_events_at(
@@ -237,6 +261,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures_util::StreamExt;
+    use tokio::net::TcpListener;
+    use tokio::sync::mpsc;
+    use tokio_tungstenite::accept_async;
+    use tokio_tungstenite::tungstenite::Message;
 
     #[test]
     fn ws_url_converts_http_to_ws_and_encodes_auth_token() {
@@ -313,5 +342,160 @@ mod tests {
         .unwrap();
 
         assert!(matches!(event, WebSocketEvent::Peer(_)));
+    }
+
+    #[test]
+    fn ws_urls_with_auth_try_plain_and_secure_websocket_schemes() {
+        let client = P2PoolWebSocketClient::with_base_url("http://127.0.0.1:46884")
+            .with_auth("user".into(), "password".into());
+
+        let urls = client.ws_urls_with_auth("/ws").unwrap();
+
+        assert_eq!(urls.len(), 2);
+        assert_eq!(
+            urls[0].as_str(),
+            "ws://127.0.0.1:46884/ws?token=dXNlcjpwYXNzd29yZA%3D%3D"
+        );
+        assert_eq!(
+            urls[1].as_str(),
+            "wss://127.0.0.1:46884/ws?token=dXNlcjpwYXNzd29yZA%3D%3D"
+        );
+    }
+
+    #[tokio::test]
+    async fn subscribe_live_events_emits_share_and_peer_events() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let websocket = accept_async(stream).await.unwrap();
+            let (mut write, mut read) = websocket.split();
+
+            for _ in 0..2 {
+                let _ = read.next().await.unwrap().unwrap();
+            }
+
+            write.send(Message::Binary(vec![1, 2, 3])).await.unwrap();
+            write
+                .send(Message::Text(
+                    serde_json::json!({
+                        "topic": "Share",
+                        "data": {
+                            "blockhash": "0000",
+                            "prev_blockhash": "ffff",
+                            "height": 42,
+                            "miner_address": "miner",
+                            "timestamp": 1700000000,
+                            "bits": "1d00ffff",
+                            "uncles": ["aaaa"]
+                        }
+                    })
+                    .to_string(),
+                ))
+                .await
+                .unwrap();
+            write
+                .send(Message::Text(
+                    serde_json::json!({
+                        "topic": "Peer",
+                        "data": {
+                            "peer_id": "12D3KooWPeerOne",
+                            "status": "Connected"
+                        }
+                    })
+                    .to_string(),
+                ))
+                .await
+                .unwrap();
+            let _ = write.close().await;
+        });
+
+        let client = P2PoolWebSocketClient::with_base_url(format!("http://{addr}"));
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let subscribe_handle = tokio::spawn(async move { client.subscribe_live_events(tx).await });
+
+        let first_event = rx.recv().await.unwrap().unwrap();
+        let second_event = rx.recv().await.unwrap().unwrap();
+        let result = subscribe_handle.await.unwrap();
+        server.await.unwrap();
+
+        assert!(result.is_ok());
+        assert!(matches!(first_event, LiveP2PoolEvent::Share(_)));
+        assert!(matches!(second_event, LiveP2PoolEvent::Peer(_)));
+    }
+
+    #[tokio::test]
+    async fn subscribe_live_events_emits_error_for_invalid_json() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let websocket = accept_async(stream).await.unwrap();
+            let (mut write, mut read) = websocket.split();
+
+            let _ = read.next().await.unwrap().unwrap();
+            let _ = read.next().await.unwrap().unwrap();
+            write.send(Message::Text("not-json".into())).await.unwrap();
+            let _ = write.close().await;
+        });
+
+        let client = P2PoolWebSocketClient::with_base_url(format!("http://{addr}"));
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let subscribe_handle = tokio::spawn(async move { client.subscribe_live_events(tx).await });
+
+        let event = rx.recv().await.unwrap();
+        let result = subscribe_handle.await.unwrap();
+        server.await.unwrap();
+
+        assert!(result.is_ok());
+        assert!(event.is_err());
+    }
+
+    #[tokio::test]
+    async fn subscribe_live_events_uses_fallback_base_url_on_connection_failure() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let fallback_addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let websocket = accept_async(stream).await.unwrap();
+            let (mut write, mut read) = websocket.split();
+
+            let _ = read.next().await.unwrap().unwrap();
+            let _ = read.next().await.unwrap().unwrap();
+            write
+                .send(Message::Text(
+                    serde_json::json!({
+                        "topic": "Share",
+                        "data": {
+                            "blockhash": "fallback",
+                            "prev_blockhash": "prev",
+                            "height": 7,
+                            "miner_address": "miner",
+                            "timestamp": 1700000000,
+                            "bits": "1d00ffff",
+                            "uncles": []
+                        }
+                    })
+                    .to_string(),
+                ))
+                .await
+                .unwrap();
+            let _ = write.close().await;
+        });
+
+        let client = P2PoolWebSocketClient::with_base_url("http://127.0.0.1:1")
+            .with_fallback_base_url(format!("http://{fallback_addr}"));
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let subscribe_handle = tokio::spawn(async move { client.subscribe_live_events(tx).await });
+
+        let event = rx.recv().await.unwrap().unwrap();
+        let result = subscribe_handle.await.unwrap();
+        server.await.unwrap();
+
+        assert!(result.is_ok());
+        assert!(matches!(event, LiveP2PoolEvent::Share(_)));
     }
 }
