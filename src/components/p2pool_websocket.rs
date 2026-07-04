@@ -124,7 +124,14 @@ impl P2PoolWebSocketClient {
             _ => {}
         }
 
-        url.set_path(path);
+        let base_path = url.path().trim_end_matches('/');
+        let extra_path = path.trim_start_matches('/');
+        let full_path = if base_path.is_empty() || base_path == "/" {
+            format!("/{extra_path}")
+        } else {
+            format!("{base_path}/{extra_path}")
+        };
+        url.set_path(&full_path);
         Ok(url)
     }
 
@@ -171,7 +178,8 @@ impl P2PoolWebSocketClient {
         }
 
         if let Some(fallback_base_url) = &self.fallback_base_url {
-            let fallback_url = self.ws_url_from_base_url(fallback_base_url, "/ws")?;
+            let mut fallback_url = self.ws_url_from_base_url(fallback_base_url, "/ws")?;
+            self.apply_auth(&mut fallback_url);
             if self
                 .subscribe_live_events_at(fallback_url, tx)
                 .await
@@ -202,35 +210,43 @@ impl P2PoolWebSocketClient {
         }
 
         while let Some(message_result) = read.next().await {
-            let message = message_result?;
-            if let Message::Text(text) = message {
-                match serde_json::from_str::<WebSocketEvent>(&text) {
-                    Ok(WebSocketEvent::Share(data)) => {
-                        let live_share = LiveShare {
-                            blockhash: data.blockhash,
-                            prev_blockhash: data.prev_blockhash,
-                            height: data.height,
-                            miner_address: data.miner_address,
-                            timestamp: data.timestamp,
-                            bits: data.bits,
-                            uncles: data.uncles,
-                        };
-                        let _ = tx.send(Ok(LiveP2PoolEvent::Share(live_share)));
+            match message_result {
+                Ok(message) => {
+                    if let Message::Text(text) = message {
+                        match serde_json::from_str::<WebSocketEvent>(&text) {
+                            Ok(WebSocketEvent::Share(data)) => {
+                                let live_share = LiveShare {
+                                    blockhash: data.blockhash,
+                                    prev_blockhash: data.prev_blockhash,
+                                    height: data.height,
+                                    miner_address: data.miner_address,
+                                    timestamp: data.timestamp,
+                                    bits: data.bits,
+                                    uncles: data.uncles,
+                                };
+                                let _ = tx.send(Ok(LiveP2PoolEvent::Share(live_share)));
+                            }
+                            Ok(WebSocketEvent::Peer(data)) => {
+                                let live_peer = LivePeerEvent {
+                                    peer_id: data.peer_id,
+                                    status: data.status,
+                                };
+                                let _ = tx.send(Ok(LiveP2PoolEvent::Peer(live_peer)));
+                            }
+                            Err(error) => {
+                                let _ = tx.send(Err(anyhow::Error::new(error)));
+                            }
+                        }
                     }
-                    Ok(WebSocketEvent::Peer(data)) => {
-                        let live_peer = LivePeerEvent {
-                            peer_id: data.peer_id,
-                            status: data.status,
-                        };
-                        let _ = tx.send(Ok(LiveP2PoolEvent::Peer(live_peer)));
-                    }
-                    Err(error) => {
-                        let _ = tx.send(Err(anyhow::Error::new(error)));
-                    }
+                }
+                Err(error) => {
+                    let _ = tx.send(Err(anyhow::Error::new(error)));
+                    return Ok(());
                 }
             }
         }
 
+        let _ = tx.send(Err(anyhow::anyhow!("websocket connection closed")));
         Ok(())
     }
 }
@@ -287,6 +303,15 @@ mod tests {
         let url = client.ws_url("/ws").unwrap();
 
         assert_eq!(url.as_str(), "wss://127.0.0.1:46884/ws");
+    }
+
+    #[test]
+    fn ws_url_appends_path_to_existing_base_path() {
+        let client = P2PoolWebSocketClient::with_base_url("http://127.0.0.1:46884/api");
+
+        let url = client.ws_url("/ws").unwrap();
+
+        assert_eq!(url.as_str(), "ws://127.0.0.1:46884/api/ws");
     }
 
     #[test]
@@ -423,6 +448,33 @@ mod tests {
         assert!(result.is_ok());
         assert!(matches!(first_event, LiveP2PoolEvent::Share(_)));
         assert!(matches!(second_event, LiveP2PoolEvent::Peer(_)));
+    }
+
+    #[tokio::test]
+    async fn subscribe_live_events_emits_error_when_connection_closes() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let websocket = accept_async(stream).await.unwrap();
+            let (mut write, mut read) = websocket.split();
+
+            let _ = read.next().await.unwrap().unwrap();
+            let _ = read.next().await.unwrap().unwrap();
+            let _ = write.close().await;
+        });
+
+        let client = P2PoolWebSocketClient::with_base_url(format!("http://{addr}"));
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let subscribe_handle = tokio::spawn(async move { client.subscribe_live_events(tx).await });
+
+        let event = rx.recv().await.unwrap();
+        let result = subscribe_handle.await.unwrap();
+        server.await.unwrap();
+
+        assert!(event.is_err());
+        assert!(result.is_ok());
     }
 
     #[tokio::test]

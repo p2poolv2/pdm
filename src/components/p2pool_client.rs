@@ -162,7 +162,7 @@ impl P2PoolClient {
                     && let Some(fallback_base_url) = &self.fallback_base_url
                 {
                     return self
-                        .fetch_json_from_base_url(fallback_base_url, path, query, false)
+                        .fetch_json_from_base_url(fallback_base_url, path, query, true)
                         .await;
                 }
                 Err(error)
@@ -256,6 +256,28 @@ mod tests {
         let client = P2PoolClient::from_config(config);
 
         assert_eq!(client.fallback_base_url.as_deref(), Some(FALLBACK_BASE_URL));
+    }
+
+    #[tokio::test]
+    async fn fallback_fetch_uses_basic_auth_when_configured() {
+        let mut server = Server::new_async().await;
+
+        let mock = server
+            .mock("GET", "/chain_info")
+            .match_header("authorization", "Basic dXNlcjpwYXNzd29yZA==")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(json!({ "total_work": "abc" }).to_string())
+            .create();
+
+        let client = P2PoolClient::with_base_url("http://127.0.0.1:1")
+            .with_fallback_base_url(server.url())
+            .with_auth("user".into(), "password".into());
+
+        let result = client.fetch_chain_info().await.unwrap();
+
+        assert_eq!(result.total_work, "abc");
+        mock.assert();
     }
 
     #[tokio::test]
