@@ -137,3 +137,111 @@ impl Default for BitcoinStatusView {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::App;
+    use crate::components::bitcoin_client::BitcoinChainInfo;
+    use ratatui::{Terminal, backend::TestBackend, prelude::Rect};
+    use std::path::PathBuf;
+
+    fn render_view(app: &App) -> String {
+        let backend = TestBackend::new(80, 25);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let area = Rect::new(0, 0, 80, 25);
+
+        terminal
+            .draw(|f| BitcoinStatusView::render(f, app, area))
+            .unwrap();
+
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect()
+    }
+
+    #[test]
+    fn renders_prompt_when_no_bitcoin_conf_is_selected() {
+        let app = App::new();
+
+        let output = render_view(&app);
+
+        assert!(output.contains("Select a bitcoin.conf file to load Bitcoin Core chain info."));
+        assert!(!output.contains("Loading Bitcoin chain info"));
+        assert!(!output.contains("Failed to fetch Bitcoin chain info"));
+    }
+
+    #[test]
+    fn renders_loaded_chain_info_with_formatted_values() {
+        let mut app = App::new();
+        app.bitcoin_conf_path = Some(PathBuf::from("/tmp/bitcoin.conf"));
+        app.bitcoin_chain_info = Some(BitcoinChainInfo {
+            network: "mainnet".to_string(),
+            block_height: 850_000,
+            best_block_hash: "abc123".to_string(),
+            verification_progress: Some(0.9123),
+            initial_block_download: Some(true),
+            connection_count: Some(7),
+        });
+
+        let output = render_view(&app).replace("                ", " ");
+
+        assert!(output.contains("Network : mainnet"));
+        assert!(output.contains("Block Height           : 850000"));
+        assert!(output.contains("Best Block Hash        : abc123"));
+        assert!(output.contains("Verification Progress  : 91.23%"));
+        assert!(output.contains("Initial Block Download : yes"));
+        assert!(output.contains("Connection Count       : 7"));
+        assert!(!output.contains("Loading Bitcoin chain info"));
+        assert!(!output.contains("Failed to fetch Bitcoin chain info"));
+    }
+
+    #[test]
+    fn renders_loading_state_when_chain_info_is_pending() {
+        let mut app = App::new();
+        app.bitcoin_conf_path = Some(PathBuf::from("/tmp/bitcoin.conf"));
+
+        let output = render_view(&app);
+
+        assert!(output.contains("Loading Bitcoin chain info..."));
+        assert!(!output.contains("Select a bitcoin.conf file"));
+        assert!(!output.contains("Failed to fetch Bitcoin chain info"));
+    }
+
+    #[test]
+    fn renders_error_state_when_chain_info_fetch_fails() {
+        let mut app = App::new();
+        app.bitcoin_conf_path = Some(PathBuf::from("/tmp/bitcoin.conf"));
+        app.bitcoin_chain_info_error = Some("RPC offline".to_string());
+
+        let output = render_view(&app);
+
+        assert!(output.contains("Failed to fetch Bitcoin chain info: RPC offline"));
+        assert!(!output.contains("Loading Bitcoin chain info"));
+        assert!(!output.contains("Network"));
+    }
+
+    #[test]
+    fn renders_none_and_false_formatting_for_optional_values() {
+        let mut app = App::new();
+        app.bitcoin_conf_path = Some(PathBuf::from("/tmp/bitcoin.conf"));
+        app.bitcoin_chain_info = Some(BitcoinChainInfo {
+            network: "testnet".to_string(),
+            block_height: 42,
+            best_block_hash: "def456".to_string(),
+            verification_progress: None,
+            initial_block_download: Some(false),
+            connection_count: None,
+        });
+
+        let output = render_view(&app);
+
+        assert!(output.contains("Verification Progress  : -"));
+        assert!(output.contains("Initial Block Download : no"));
+        assert!(output.contains("Connection Count       : -"));
+    }
+}

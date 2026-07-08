@@ -400,3 +400,100 @@ impl Default for App {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn poll_bitcoin_chain_info_updates_state_on_success() {
+        let mut app = App::new();
+        app.bitcoin_chain_info_error = Some("stale".to_string());
+        app.bitcoin_chain_info_tx
+            .send(Ok(BitcoinChainInfo {
+                network: "mainnet".to_string(),
+                block_height: 1,
+                best_block_hash: "abc".to_string(),
+                verification_progress: None,
+                initial_block_download: None,
+                connection_count: None,
+            }))
+            .unwrap();
+
+        app.poll_bitcoin_chain_info();
+
+        let info = app.bitcoin_chain_info.as_ref().unwrap();
+
+        assert_eq!(info.block_height, 1);
+        assert_eq!(info.best_block_hash, "abc");
+        assert!(app.bitcoin_chain_info_error.is_none());
+    }
+
+    #[test]
+    fn poll_bitcoin_chain_info_updates_state_on_error() {
+        let mut app = App::new();
+        app.bitcoin_chain_info = Some(BitcoinChainInfo {
+            network: "mainnet".to_string(),
+            block_height: 1,
+            best_block_hash: "abc".to_string(),
+            verification_progress: None,
+            initial_block_download: None,
+            connection_count: None,
+        });
+        app.bitcoin_chain_info_tx
+            .send(Err(anyhow::anyhow!("boom")))
+            .unwrap();
+
+        app.poll_bitcoin_chain_info();
+
+        assert!(app.bitcoin_chain_info.is_none());
+        assert_eq!(app.bitcoin_chain_info_error.as_deref(), Some("boom"));
+    }
+
+    #[test]
+    fn poll_bitcoin_chain_info_processes_all_queued_results() {
+        let mut app = App::new();
+        app.bitcoin_chain_info_tx
+            .send(Ok(BitcoinChainInfo {
+                network: "mainnet".to_string(),
+                block_height: 1,
+                best_block_hash: "abc".to_string(),
+                verification_progress: None,
+                initial_block_download: None,
+                connection_count: None,
+            }))
+            .unwrap();
+        app.bitcoin_chain_info_tx
+            .send(Err(anyhow::anyhow!("second failure")))
+            .unwrap();
+
+        app.poll_bitcoin_chain_info();
+
+        assert!(app.bitcoin_chain_info.is_none());
+        assert_eq!(
+            app.bitcoin_chain_info_error.as_deref(),
+            Some("second failure")
+        );
+    }
+
+    #[test]
+    fn fetch_bitcoin_chain_info_clears_state_without_configured_bitcoin_conf() {
+        let mut app = App::new();
+        app.bitcoin_conf_path = None;
+        app.bitcoin_chain_info = Some(BitcoinChainInfo {
+            network: "mainnet".to_string(),
+            block_height: 1,
+            best_block_hash: "abc".to_string(),
+            verification_progress: None,
+            initial_block_download: None,
+            connection_count: None,
+        });
+        app.bitcoin_chain_info_error = Some("stale".to_string());
+
+        app.fetch_bitcoin_chain_info();
+
+        assert!(app.bitcoin_chain_info.is_none());
+        assert!(app.bitcoin_chain_info_error.is_none());
+        assert!(app.bitcoin_chain_info_rx.try_recv().is_err());
+    }
+}

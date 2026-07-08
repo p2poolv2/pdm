@@ -389,4 +389,248 @@ mod tests {
         chain_mock.assert();
         connections_mock.assert();
     }
+
+    #[tokio::test]
+    async fn fetch_chain_info_returns_error_for_rpc_error_response() {
+        let mut server = Server::new_async().await;
+
+        server
+            .mock("POST", "/")
+            .match_body(Matcher::Regex("getblockchaininfo".to_string()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                json!({
+                    "result": null,
+                    "error": {"code": -8, "message": "invalid parameter"},
+                    "id": "pdm"
+                })
+                .to_string(),
+            )
+            .create();
+
+        let client = BitcoinClient {
+            client: build_client(),
+            url: server.url(),
+            auth_credentials: None,
+        };
+
+        let error = client.fetch_chain_info().await.unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "Bitcoin Core RPC error -8: invalid parameter"
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_chain_info_returns_error_for_http_error_response() {
+        let mut server = Server::new_async().await;
+
+        server
+            .mock("POST", "/")
+            .match_body(Matcher::Regex("getblockchaininfo".to_string()))
+            .with_status(500)
+            .with_body("internal error")
+            .create();
+
+        let client = BitcoinClient {
+            client: build_client(),
+            url: server.url(),
+            auth_credentials: None,
+        };
+
+        let error = client.fetch_chain_info().await.unwrap_err();
+
+        assert_eq!(error.to_string(), "Bitcoin Core RPC returned an HTTP error");
+    }
+
+    #[tokio::test]
+    async fn fetch_chain_info_returns_error_for_invalid_json_response() {
+        let mut server = Server::new_async().await;
+
+        server
+            .mock("POST", "/")
+            .match_body(Matcher::Regex("getblockchaininfo".to_string()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body("not-json")
+            .create();
+
+        let client = BitcoinClient {
+            client: build_client(),
+            url: server.url(),
+            auth_credentials: None,
+        };
+
+        let error = client.fetch_chain_info().await.unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "Bitcoin Core RPC returned an invalid response"
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_chain_info_returns_error_when_result_is_missing() {
+        let mut server = Server::new_async().await;
+
+        server
+            .mock("POST", "/")
+            .match_body(Matcher::Regex("getblockchaininfo".to_string()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(json!({ "result": null, "error": null, "id": "pdm" }).to_string())
+            .create();
+
+        let client = BitcoinClient {
+            client: build_client(),
+            url: server.url(),
+            auth_credentials: None,
+        };
+
+        let error = client.fetch_chain_info().await.unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "Bitcoin Core RPC response did not include a result"
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_chain_info_treats_connection_count_failure_as_none() {
+        let mut server = Server::new_async().await;
+
+        server
+            .mock("POST", "/")
+            .match_body(Matcher::Regex("getblockchaininfo".to_string()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                json!({
+                    "result": {
+                        "chain": "main",
+                        "blocks": 111,
+                        "bestblockhash": "abc",
+                        "verificationprogress": 0.5,
+                        "initialblockdownload": true
+                    },
+                    "error": null,
+                    "id": "pdm"
+                })
+                .to_string(),
+            )
+            .create();
+        server
+            .mock("POST", "/")
+            .match_body(Matcher::Regex("getconnectioncount".to_string()))
+            .with_status(500)
+            .with_body("boom")
+            .create();
+
+        let client = BitcoinClient {
+            client: build_client(),
+            url: server.url(),
+            auth_credentials: None,
+        };
+
+        let result = client.fetch_chain_info().await.unwrap();
+
+        assert_eq!(result.block_height, 111);
+        assert_eq!(result.best_block_hash, "abc");
+        assert_eq!(result.verification_progress, Some(0.5));
+        assert_eq!(result.initial_block_download, Some(true));
+        assert_eq!(result.connection_count, None);
+    }
+
+    #[tokio::test]
+    async fn fetch_chain_info_sends_basic_auth_credentials() {
+        let mut server = Server::new_async().await;
+
+        server
+            .mock("POST", "/")
+            .match_header("authorization", "Basic YWxpY2U6c2VjcmV0")
+            .match_body(Matcher::Regex("getblockchaininfo".to_string()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                json!({
+                    "result": {
+                        "chain": "main",
+                        "blocks": 1,
+                        "bestblockhash": "abc",
+                        "verificationprogress": null,
+                        "initialblockdownload": null
+                    },
+                    "error": null,
+                    "id": "pdm"
+                })
+                .to_string(),
+            )
+            .create();
+
+        let client = BitcoinClient {
+            client: build_client(),
+            url: server.url(),
+            auth_credentials: Some(("alice".to_string(), "secret".to_string())),
+        };
+
+        let result = client.fetch_chain_info().await.unwrap();
+
+        assert_eq!(result.block_height, 1);
+    }
+
+    #[test]
+    fn ignores_disabled_and_whitespace_only_config_entries() {
+        let entries = vec![
+            entry("rpcport", "   "),
+            ConfigEntry {
+                key: "rpcport".to_string(),
+                value: "18443".to_string(),
+                schema: None,
+                enabled: false,
+                section: None,
+            },
+        ];
+        let client = BitcoinClient::from_config_entries(&entries);
+
+        assert_eq!(client.url, "http://127.0.0.1:8332");
+    }
+
+    #[test]
+    fn falls_back_to_cookie_auth_when_rpc_password_is_missing() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "pdm-bitcoin-client-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let cookie_path = temp_dir.join(".cookie");
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        std::fs::write(&cookie_path, "alice:secret").unwrap();
+
+        let entries = vec![
+            entry("rpcuser", "alice"),
+            entry("rpccookiefile", cookie_path.to_string_lossy().as_ref()),
+        ];
+        let client = BitcoinClient::from_config_entries(&entries);
+
+        assert_eq!(
+            client.auth_credentials,
+            Some(("alice".to_string(), "secret".to_string()))
+        );
+
+        let _ = std::fs::remove_file(cookie_path);
+        let _ = std::fs::remove_dir(temp_dir);
+    }
+
+    #[test]
+    fn formats_ipv6_rpcbind_without_explicit_port() {
+        let entries = vec![entry("rpcbind", "::1")];
+        let client = BitcoinClient::from_config_entries(&entries);
+
+        assert_eq!(client.url, "http://[::1]:8332");
+    }
 }
