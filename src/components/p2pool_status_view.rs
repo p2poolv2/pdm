@@ -223,15 +223,16 @@ impl P2PoolStatusView {
         let mut seen = HashSet::new();
 
         for share in app.live_shares.iter().rev() {
-            seen.insert(share.blockhash.clone());
-            entries.push(ShareTableEntry {
-                height: share.height,
-                blockhash: share.blockhash.clone(),
-                miner: share.miner_address.clone(),
-                bits: share.bits.clone(),
-                timestamp: share.timestamp,
-                uncles: share.uncles.len(),
-            });
+            if seen.insert(share.blockhash.clone()) {
+                entries.push(ShareTableEntry {
+                    height: share.height,
+                    blockhash: share.blockhash.clone(),
+                    miner: share.miner_address.clone(),
+                    bits: share.bits.clone(),
+                    timestamp: share.timestamp,
+                    uncles: share.uncles.len(),
+                });
+            }
         }
 
         if let Some(info) = &app.share_info {
@@ -754,6 +755,21 @@ mod tests {
 
         assert!(output.contains("Connected Peers        : 1"));
         assert!(output.contains("12D3KooWNoStatus (Connected)"));
+    }
+
+    #[test]
+    fn render_share_info_deduplicates_duplicate_live_shares() {
+        let mut app = App::new();
+        app.p2pool_status_tab = SHARE_TAB;
+
+        app.live_shares = vec![
+            live_share(42, "samehash", "duplicated", 1_700_000_000, "1d00ffff", 0),
+            live_share(42, "samehash", "duplicated", 1_700_000_001, "1d00ffff", 0),
+        ];
+
+        let output = render_view(&app);
+
+        assert_eq!(output.matches("duplicated").count(), 1);
     }
 
     #[test]
