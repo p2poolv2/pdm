@@ -417,6 +417,7 @@ mod tests {
                 verification_progress: None,
                 initial_block_download: None,
                 connection_count: None,
+                connected_peer_addresses: Vec::new(),
             }))
             .unwrap();
 
@@ -439,6 +440,7 @@ mod tests {
             verification_progress: None,
             initial_block_download: None,
             connection_count: None,
+            connected_peer_addresses: Vec::new(),
         });
         app.bitcoin_chain_info_tx
             .send(Err(anyhow::anyhow!("boom")))
@@ -461,6 +463,7 @@ mod tests {
                 verification_progress: None,
                 initial_block_download: None,
                 connection_count: None,
+                connected_peer_addresses: Vec::new(),
             }))
             .unwrap();
         app.bitcoin_chain_info_tx
@@ -487,6 +490,7 @@ mod tests {
             verification_progress: None,
             initial_block_download: None,
             connection_count: None,
+            connected_peer_addresses: Vec::new(),
         });
         app.bitcoin_chain_info_error = Some("stale".to_string());
 

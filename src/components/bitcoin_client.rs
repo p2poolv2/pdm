@@ -569,6 +569,20 @@ mod tests {
             .with_status(500)
             .with_body("boom")
             .create();
+        server
+            .mock("POST", "/")
+            .match_body(Matcher::Regex("getpeerinfo".to_string()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                json!({
+                    "result": [],
+                    "error": null,
+                    "id": "pdm"
+                })
+                .to_string(),
+            )
+            .create();
 
         let client = BitcoinClient {
             client: build_client(),
@@ -604,6 +618,37 @@ mod tests {
                         "verificationprogress": null,
                         "initialblockdownload": null
                     },
+                    "error": null,
+                    "id": "pdm"
+                })
+                .to_string(),
+            )
+            .create();
+        server
+            .mock("POST", "/")
+            .match_header("authorization", "Basic YWxpY2U6c2VjcmV0")
+            .match_body(Matcher::Regex("getconnectioncount".to_string()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                json!({
+                    "result": 8,
+                    "error": null,
+                    "id": "pdm"
+                })
+                .to_string(),
+            )
+            .create();
+
+        server
+            .mock("POST", "/")
+            .match_header("authorization", "Basic YWxpY2U6c2VjcmV0")
+            .match_body(Matcher::Regex("getpeerinfo".to_string()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                json!({
+                    "result": [],
                     "error": null,
                     "id": "pdm"
                 })

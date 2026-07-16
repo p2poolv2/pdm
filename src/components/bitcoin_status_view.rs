@@ -225,6 +225,10 @@ mod tests {
             verification_progress: Some(0.9123),
             initial_block_download: Some(true),
             connection_count: Some(7),
+            connected_peer_addresses: vec![
+                "192.168.1.100:8333".to_string(),
+                "192.168.1.101:8333".to_string(),
+            ],
         });
 
         let output = render_view(&app).replace("                ", " ");
@@ -275,6 +279,7 @@ mod tests {
             verification_progress: None,
             initial_block_download: Some(false),
             connection_count: None,
+            connected_peer_addresses: vec![],
         });
 
         let output = render_view(&app);
