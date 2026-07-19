@@ -11,7 +11,6 @@ use serde::de::DeserializeOwned;
 use std::time::Duration;
 
 const REQUEST_TIMEOUT_SECONDS: u64 = 10;
-const TESTNET4_FALLBACK_BASE_URL: &str = "https://testnet4.p2poolv2.org";
 
 #[derive(Debug, Clone)]
 pub struct P2PoolClient {
