@@ -13,6 +13,7 @@ use crate::components::p2pool_websocket::{
     LiveP2PoolEvent, LivePeerEvent, LiveShare, P2PoolWebSocketClient,
 };
 use crate::components::settings_view::SettingsView;
+use crate::process_manager::{ProcessManager, ProcessState};
 use crate::settings::Settings;
 use anyhow::Result;
 use base64::{Engine as _, engine::general_purpose};
@@ -105,6 +106,9 @@ pub enum AppAction {
     SetBitcoinLogDataDir(PathBuf),
     SetBitcoinLogFile(PathBuf),
     CopyBitcoinLogs,
+    StartBitcoinCore,
+    StopBitcoinCore,
+    RestartBitcoinCore,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -135,6 +139,9 @@ pub struct App {
     pub bitcoin_status_tab: usize,
     pub bitcoin_chain_info: Option<BitcoinChainInfo>,
     pub bitcoin_chain_info_error: Option<String>,
+    pub bitcoin_process_manager: ProcessManager,
+    pub bitcoin_process_state: ProcessState,
+    pub bitcoin_process_error: Option<String>,
     pub bitcoin_log_path: Option<PathBuf>,
     pub bitcoin_log_lines: Vec<String>,
     pub bitcoin_log_status: String,
@@ -205,6 +212,9 @@ impl App {
             bitcoin_status_tab: 0,
             bitcoin_chain_info: None,
             bitcoin_chain_info_error: None,
+            bitcoin_process_manager: ProcessManager::new(),
+            bitcoin_process_state: ProcessState::Stopped,
+            bitcoin_process_error: None,
             bitcoin_log_path: None,
             bitcoin_log_lines: Vec::new(),
             bitcoin_log_status: "No Bitcoin Core debug.log found.".to_string(),
@@ -293,6 +303,71 @@ impl App {
             self.bitcoin_log_status =
                 "No Bitcoin Core debug.log found. Choose a log file or data directory.".to_string();
         }
+    }
+
+    pub fn poll_bitcoin_process(&mut self) {
+        self.bitcoin_process_manager.poll();
+        self.bitcoin_process_state = self.bitcoin_process_manager.state();
+        self.bitcoin_process_error = self.bitcoin_process_manager.error().map(str::to_string);
+    }
+
+    pub fn start_bitcoin_process(&mut self) -> anyhow::Result<()> {
+        let exe = self
+            .settings
+            .bitcoind_path
+            .as_deref()
+            .unwrap_or(std::path::Path::new("bitcoind"));
+        if self.settings.bitcoind_path.is_some() && !exe.exists() {
+            let msg = format!("bitcoind not found at {}", exe.display());
+            self.bitcoin_process_manager.mark_failed(&msg);
+            self.bitcoin_process_state = self.bitcoin_process_manager.state();
+            self.bitcoin_process_error = self.bitcoin_process_manager.error().map(str::to_string);
+            return Err(anyhow::anyhow!("{msg}"));
+        }
+        let mut command = self.bitcoin_process_command();
+        let result = self.bitcoin_process_manager.start(&mut command);
+        self.bitcoin_process_state = self.bitcoin_process_manager.state();
+        self.bitcoin_process_error = self.bitcoin_process_manager.error().map(str::to_string);
+        result
+    }
+
+    fn bitcoin_process_command(&self) -> std::process::Command {
+        let exe = self
+            .settings
+            .bitcoind_path
+            .clone()
+            .unwrap_or_else(|| std::path::PathBuf::from("bitcoind"));
+        let mut cmd = std::process::Command::new(exe);
+
+        if let Some(conf) = &self.bitcoin_conf_path {
+            cmd.arg(format!("-conf={}", conf.display()));
+        }
+        if let Some(datadir) = &self.settings.bitcoin_core_data_dir {
+            cmd.arg(format!("-datadir={}", datadir.display()));
+        }
+
+        cmd.stdout(std::process::Stdio::null());
+        cmd.stderr(std::process::Stdio::null());
+        cmd
+    }
+
+    pub fn stop_bitcoin_process(&mut self) -> anyhow::Result<()> {
+        let result = self.bitcoin_process_manager.stop();
+        self.bitcoin_process_state = self.bitcoin_process_manager.state();
+        self.bitcoin_process_error = self.bitcoin_process_manager.error().map(str::to_string);
+        result
+    }
+
+    pub fn shutdown_bitcoin_process(&mut self) {
+        let _ = self.stop_bitcoin_process();
+    }
+
+    pub fn restart_bitcoin_process(&mut self) -> anyhow::Result<()> {
+        let mut command = self.bitcoin_process_command();
+        let result = self.bitcoin_process_manager.restart(&mut command);
+        self.bitcoin_process_state = self.bitcoin_process_manager.state();
+        self.bitcoin_process_error = self.bitcoin_process_manager.error().map(str::to_string);
+        result
     }
 
     pub fn poll_bitcoin_logs(&mut self) {

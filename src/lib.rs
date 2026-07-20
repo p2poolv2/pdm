@@ -8,5 +8,6 @@ pub mod bitcoin_logs;
 pub mod components;
 pub mod config;
 pub mod p2poolv2_config;
+pub mod process_manager;
 pub mod settings;
 pub mod ui;

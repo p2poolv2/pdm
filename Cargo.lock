@@ -1725,6 +1725,7 @@ dependencies = [
  "directories",
  "futures-util",
  "insta",
+ "libc",
  "mockito",
  "p2poolv2_config",
  "ratatui",

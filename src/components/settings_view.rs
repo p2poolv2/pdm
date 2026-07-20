@@ -10,7 +10,7 @@ use ratatui::{
 };
 
 /// Number of settings fields.
-pub const FIELD_COUNT: usize = 7;
+pub const FIELD_COUNT: usize = 8;
 
 /// Describes how a settings field behaves when Enter is pressed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,6 +30,7 @@ pub const FIELDS: [(&str, FieldKind); FIELD_COUNT] = [
     ("Bitcoin Core data directory", FieldKind::DirectoryPicker),
     ("Bitcoin Core log file", FieldKind::FilePicker),
     ("Settings directory", FieldKind::DirectoryPicker),
+    ("Bitcoin Core executable", FieldKind::FilePicker),
 ];
 
 #[derive(Debug, Clone)]
@@ -108,6 +109,10 @@ impl SettingsView {
                 .map(|p| p.to_string_lossy().into_owned()),
             app.settings
                 .settings_dir_override
+                .as_ref()
+                .map(|p| p.to_string_lossy().into_owned()),
+            app.settings
+                .bitcoind_path
                 .as_ref()
                 .map(|p| p.to_string_lossy().into_owned()),
         ];

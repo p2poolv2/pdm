@@ -34,6 +34,8 @@ pub struct Settings {
     /// the default location always holds a copy so the override is found
     /// on the next launch.
     pub settings_dir_override: Option<PathBuf>,
+    /// Path to the Bitcoin Core executable (`bitcoind`).
+    pub bitcoind_path: Option<PathBuf>,
 }
 
 /// Returns the directory where `settings.toml` is stored.

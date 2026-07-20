@@ -46,18 +46,27 @@ impl BitcoinStatusView {
             // Chain Info
             0 => Self::render_chain_info(f, app, content_area),
             // System
-            1 => {
-                let text = "System";
-                let p = Paragraph::new(text)
-                    .block(Block::default().borders(Borders::ALL))
-                    .wrap(Wrap { trim: true });
-                f.render_widget(p, content_area);
-            }
+            1 => Self::render_system(f, app, content_area),
             // Logs
             2 => Self::render_logs(f, app, content_area),
             // Peers
             3 => Self::render_peers(f, app, content_area),
             _ => {}
+        }
+    }
+
+    pub fn handle_system_input(app: &mut App, key: KeyEvent) -> AppAction {
+        match key.code {
+            KeyCode::Char('s') if app.bitcoin_process_state.can_start() => {
+                AppAction::StartBitcoinCore
+            }
+            KeyCode::Char('t') if app.bitcoin_process_state.can_stop() => {
+                AppAction::StopBitcoinCore
+            }
+            KeyCode::Char('r') if app.bitcoin_process_state.can_restart() => {
+                AppAction::RestartBitcoinCore
+            }
+            _ => AppAction::None,
         }
     }
 
@@ -188,6 +197,44 @@ impl BitcoinStatusView {
             }
             _ => AppAction::None,
         }
+    }
+
+    fn render_system(f: &mut Frame, app: &App, area: Rect) {
+        let state = app.bitcoin_process_state.as_str();
+        let error = app.bitcoin_process_error.clone().unwrap_or_default();
+        let status_line = if error.is_empty() {
+            format!("Process state: {state}")
+        } else {
+            format!("Process state: {state} ({error})")
+        };
+        let start_style = if app.bitcoin_process_state.can_start() {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        let stop_style = if app.bitcoin_process_state.can_stop() {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        let restart_style = if app.bitcoin_process_state.can_restart() {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        let controls = vec![
+            Line::from(vec![
+                Span::styled("[s] Start ", start_style),
+                Span::styled("[t] Stop ", stop_style),
+                Span::styled("[r] Restart", restart_style),
+            ]),
+            Line::from(""),
+            Line::from(status_line),
+        ];
+        let paragraph = Paragraph::new(controls)
+            .block(Block::default().borders(Borders::ALL).title(" Bitcoin Core Process "))
+            .wrap(Wrap { trim: true });
+        f.render_widget(paragraph, area);
     }
 
     fn render_chain_info(f: &mut Frame, app: &App, area: Rect) {
@@ -474,6 +521,20 @@ mod tests {
             .iter()
             .map(|cell| cell.symbol())
             .collect()
+    }
+
+    #[test]
+    fn renders_process_state_panel_on_system_tab() {
+        let mut app = App::new();
+        app.bitcoin_status_tab = 1;
+
+        let output = render_view(&app);
+
+        assert!(output.contains("Bitcoin Core Process"));
+        assert!(output.contains("[s] Start"));
+        assert!(output.contains("[t] Stop"));
+        assert!(output.contains("[r] Restart"));
+        assert!(output.contains("Process state: Stopped"));
     }
 
     #[test]

@@ -10,6 +10,7 @@ use pdm::app::{
 use pdm::bitcoin_config::{
     parse_config as parse_bitcoin_config, save_config as save_bitcoin_config,
 };
+use pdm::components::bitcoin_status_view::BitcoinStatusView;
 use pdm::components::settings_view::{FIELDS, FieldKind};
 use pdm::p2poolv2_config::{apply_edit as apply_p2pool_edit, flatten_config};
 use pdm::settings::{load_settings, save_settings};
@@ -82,6 +83,7 @@ where
 {
     loop {
         app.poll_bitcoin_chain_info();
+        app.poll_bitcoin_process();
         app.poll_bitcoin_logs();
         app.maybe_refresh_bitcoin_logs();
         app.poll_chain_info();
@@ -95,7 +97,10 @@ where
         {
             match dispatch_key(key, app) {
                 KeyOutcome::Ignored => {}
-                KeyOutcome::Exit => return Ok(()),
+                KeyOutcome::Exit => {
+                    app.shutdown_bitcoin_process();
+                    return Ok(());
+                }
                 KeyOutcome::Action(action) => {
                     if handle_action(action, app)?.is_break() {
                         return Ok(());
@@ -143,7 +148,18 @@ fn dispatch_key(key: event::KeyEvent, app: &mut App) -> KeyOutcome {
                 }
                 AppAction::None
             }
-            k => sidebar_nav(k, app),
+            _ => match app.bitcoin_status_tab {
+                1 => {
+                    let action = BitcoinStatusView::handle_system_input(app, key);
+                    if matches!(action, AppAction::None) {
+                        sidebar_nav(key.code, app)
+                    } else {
+                        action
+                    }
+                }
+                2 => BitcoinStatusView::handle_logs_input(app, key),
+                _ => sidebar_nav(key.code, app),
+            },
         },
 
         CurrentScreen::P2PoolStatus => match key.code {
@@ -466,6 +482,7 @@ fn handle_action(action: AppAction, app: &mut App) -> Result<ControlFlow<()>> {
                             4 => app.set_bitcoin_log_data_dir(path.clone()),
                             5 => app.set_bitcoin_log_file(path.clone()),
                             6 => app.settings.settings_dir_override = Some(path.clone()),
+                            7 => app.settings.bitcoind_path = Some(path.clone()),
                             _ => {}
                         }
                         if should_save {
@@ -528,6 +545,7 @@ fn handle_action(action: AppAction, app: &mut App) -> Result<ControlFlow<()>> {
                     app.reset_bitcoin_log_reader();
                 }
                 6 => app.settings.settings_dir_override = None,
+                7 => app.settings.bitcoind_path = None,
                 _ => {}
             }
             app.settings_view.save_error = None;
@@ -596,6 +614,18 @@ fn handle_action(action: AppAction, app: &mut App) -> Result<ControlFlow<()>> {
 
         AppAction::CopyBitcoinLogs => {
             app.copy_filtered_bitcoin_logs();
+        }
+
+        AppAction::StartBitcoinCore => {
+            let _ = app.start_bitcoin_process();
+        }
+
+        AppAction::StopBitcoinCore => {
+            let _ = app.stop_bitcoin_process();
+        }
+
+        AppAction::RestartBitcoinCore => {
+            let _ = app.restart_bitcoin_process();
         }
 
         AppAction::None => {}
