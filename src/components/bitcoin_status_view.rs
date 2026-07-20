@@ -232,7 +232,11 @@ impl BitcoinStatusView {
             Line::from(status_line),
         ];
         let paragraph = Paragraph::new(controls)
-            .block(Block::default().borders(Borders::ALL).title(" Bitcoin Core Process "))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Bitcoin Core Process "),
+            )
             .wrap(Wrap { trim: true });
         f.render_widget(paragraph, area);
     }
