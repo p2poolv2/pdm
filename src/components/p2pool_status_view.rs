@@ -3,12 +3,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 use crate::app::{App, AppAction, P2POOL_STATUS_TABS};
+use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     prelude::*,
     widgets::{Block, Borders, Cell, Paragraph, Row, Table, Tabs, Wrap},
 };
 use std::collections::HashSet;
-use crossterm::event::{KeyCode, KeyEvent};
 
 #[derive(Debug, Clone)]
 pub struct P2PoolStatusView;
