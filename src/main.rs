@@ -11,6 +11,7 @@ use pdm::bitcoin_config::{
     parse_config as parse_bitcoin_config, save_config as save_bitcoin_config,
 };
 use pdm::components::bitcoin_status_view::BitcoinStatusView;
+use pdm::components::p2pool_status_view::P2PoolStatusView;
 use pdm::components::settings_view::{FIELDS, FieldKind};
 use pdm::p2poolv2_config::{apply_edit as apply_p2pool_edit, flatten_config};
 use pdm::settings::{load_settings, save_settings};
@@ -84,6 +85,7 @@ where
     loop {
         app.poll_bitcoin_chain_info();
         app.poll_bitcoin_process();
+        app.poll_p2pool_process();
         app.poll_bitcoin_logs();
         app.maybe_refresh_bitcoin_logs();
         app.poll_chain_info();
@@ -99,6 +101,7 @@ where
                 KeyOutcome::Ignored => {}
                 KeyOutcome::Exit => {
                     app.shutdown_bitcoin_process();
+                    app.shutdown_p2pool_process();
                     return Ok(());
                 }
                 KeyOutcome::Action(action) => {
@@ -175,7 +178,13 @@ fn dispatch_key(key: event::KeyEvent, app: &mut App) -> KeyOutcome {
                 }
                 AppAction::None
             }
-            k => sidebar_nav(k, app),
+            k => {
+                if app.p2pool_status_tab == 3 {
+                    P2PoolStatusView::handle_process_input(app, key)
+                } else {
+                    sidebar_nav(k, app)
+                }
+            }
         },
 
         CurrentScreen::BitcoinConfig => {
@@ -483,6 +492,7 @@ fn handle_action(action: AppAction, app: &mut App) -> Result<ControlFlow<()>> {
                             5 => app.set_bitcoin_log_file(path.clone()),
                             6 => app.settings.settings_dir_override = Some(path.clone()),
                             7 => app.settings.bitcoind_path = Some(path.clone()),
+                            8 => app.settings.p2poolv2_path = Some(path.clone()),
                             _ => {}
                         }
                         if should_save {
@@ -546,6 +556,7 @@ fn handle_action(action: AppAction, app: &mut App) -> Result<ControlFlow<()>> {
                 }
                 6 => app.settings.settings_dir_override = None,
                 7 => app.settings.bitcoind_path = None,
+                8 => app.settings.p2poolv2_path = None,
                 _ => {}
             }
             app.settings_view.save_error = None;
@@ -626,6 +637,15 @@ fn handle_action(action: AppAction, app: &mut App) -> Result<ControlFlow<()>> {
 
         AppAction::RestartBitcoinCore => {
             let _ = app.restart_bitcoin_process();
+        }
+        AppAction::StartP2Pool => {
+            let _ = app.start_p2pool_process();
+        }
+        AppAction::StopP2Pool => {
+            let _ = app.stop_p2pool_process();
+        }
+        AppAction::RestartP2Pool => {
+            let _ = app.restart_p2pool_process();
         }
 
         AppAction::None => {}
@@ -2354,5 +2374,73 @@ port = 46884
 
         assert!(app.p2pool_conf_path.is_none());
         assert!(app.p2pool_config.is_none());
+    }
+
+    #[test]
+    fn dispatch_key_p2pool_status_process_tab_start_action() {
+        let mut app = App::new();
+        app.current_screen = CurrentScreen::P2PoolStatus;
+        app.p2pool_status_tab = 3;
+
+        let outcome = dispatch_key(press(KeyCode::Char('s')), &mut app);
+
+        assert!(matches!(
+            outcome,
+            KeyOutcome::Action(AppAction::StartP2Pool)
+        ));
+    }
+
+    #[test]
+    fn dispatch_key_p2pool_status_non_process_tab_falls_back_to_sidebar_nav() {
+        let mut app = App::new();
+        app.current_screen = CurrentScreen::P2PoolStatus;
+        app.p2pool_status_tab = 0;
+        app.sidebar_index = 0;
+
+        dispatch_key(press(KeyCode::Down), &mut app);
+
+        assert_eq!(app.sidebar_index, 1);
+    }
+
+    #[test]
+    #[serial]
+    fn file_selected_for_settings_field_8_p2poolv2_path() {
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        redirect_saves_to(&dir);
+        let path = dir.path().join("p2poolv2");
+        std::fs::write(&path, "").unwrap();
+
+        let mut app = App::new();
+        app.explorer_trigger = Some(ExplorerTrigger::Settings(8));
+        run(AppAction::FileSelected(path.clone()), &mut app);
+
+        assert_eq!(app.settings.p2poolv2_path, Some(path));
+        assert_eq!(app.current_screen, CurrentScreen::Settings);
+    }
+
+    #[test]
+    #[serial]
+    fn clear_settings_field_8_removes_p2poolv2_path() {
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        redirect_saves_to(&dir);
+
+        let mut app = App::new();
+        app.settings.p2poolv2_path = Some(std::path::PathBuf::from("/opt/p2poolv2/bin/p2poolv2"));
+
+        run(AppAction::ClearSettingsField(8), &mut app);
+
+        assert!(app.settings.p2poolv2_path.is_none());
+    }
+
+    #[test]
+    fn app_action_start_stop_restart_p2pool_do_not_panic() {
+        let mut app = App::new();
+        let _ = handle_action(AppAction::StartP2Pool, &mut app);
+        let _ = handle_action(AppAction::StopP2Pool, &mut app);
+        let _ = handle_action(AppAction::RestartP2Pool, &mut app);
     }
 }

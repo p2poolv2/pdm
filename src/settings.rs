@@ -36,6 +36,8 @@ pub struct Settings {
     pub settings_dir_override: Option<PathBuf>,
     /// Path to the Bitcoin Core executable (`bitcoind`).
     pub bitcoind_path: Option<PathBuf>,
+    /// Path to the p2poolv2 node executable.
+    pub p2poolv2_path: Option<PathBuf>,
 }
 
 /// Returns the directory where `settings.toml` is stored.
@@ -131,6 +133,7 @@ mod tests {
         assert!(s.ln_conf_path.is_none());
         assert!(s.shares_market_conf_path.is_none());
         assert!(s.settings_dir_override.is_none());
+        assert!(s.p2poolv2_path.is_none());
     }
 
     #[test]
@@ -403,6 +406,21 @@ bitcoin_core_log_path = "/tmp/bitcoin/debug.log"
         assert_eq!(
             loaded.bitcoin_conf_path,
             Some(PathBuf::from("/default/bitcoin.conf"))
+        );
+    }
+
+    #[test]
+    fn p2poolv2_path_field_serializes() {
+        let settings = Settings {
+            p2poolv2_path: Some(PathBuf::from("/opt/p2poolv2/bin/p2poolv2")),
+            ..Default::default()
+        };
+        let toml_str = toml::to_string_pretty(&settings).unwrap();
+        assert!(toml_str.contains("p2poolv2_path"));
+        let back: Settings = toml::from_str(&toml_str).unwrap();
+        assert_eq!(
+            back.p2poolv2_path,
+            Some(PathBuf::from("/opt/p2poolv2/bin/p2poolv2"))
         );
     }
 }

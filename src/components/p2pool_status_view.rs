@@ -2,12 +2,13 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use crate::app::{App, P2POOL_STATUS_TABS};
+use crate::app::{App, AppAction, P2POOL_STATUS_TABS};
 use ratatui::{
     prelude::*,
     widgets::{Block, Borders, Cell, Paragraph, Row, Table, Tabs, Wrap},
 };
 use std::collections::HashSet;
+use crossterm::event::{KeyCode, KeyEvent};
 
 #[derive(Debug, Clone)]
 pub struct P2PoolStatusView;
@@ -49,6 +50,7 @@ impl P2PoolStatusView {
             0 => Self::render_chain_info(f, app, outer[1]),
             1 => Self::render_share_info(f, app, outer[1]),
             2 => Self::render_peer_info(f, app, outer[1]),
+            3 => Self::render_process(f, app, outer[1]),
             _ => {}
         }
     }
@@ -192,6 +194,59 @@ impl P2PoolStatusView {
             .block(Block::default().borders(Borders::ALL).title(" Peers Info "))
             .wrap(Wrap { trim: true });
 
+        f.render_widget(paragraph, area);
+    }
+
+    pub fn handle_process_input(app: &mut App, key: KeyEvent) -> AppAction {
+        match key.code {
+            KeyCode::Char('s') if app.p2pool_process_state.can_start() => AppAction::StartP2Pool,
+            KeyCode::Char('t') if app.p2pool_process_state.can_stop() => AppAction::StopP2Pool,
+            KeyCode::Char('r') if app.p2pool_process_state.can_restart() => {
+                AppAction::RestartP2Pool
+            }
+            _ => AppAction::None,
+        }
+    }
+
+    fn render_process(f: &mut Frame, app: &App, area: Rect) {
+        let state = app.p2pool_process_state.as_str();
+        let error = app.p2pool_process_error.clone().unwrap_or_default();
+        let status_line = if error.is_empty() {
+            format!("Process state: {state}")
+        } else {
+            format!("Process state: {state} ({error})")
+        };
+        let start_style = if app.p2pool_process_state.can_start() {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        let stop_style = if app.p2pool_process_state.can_stop() {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        let restart_style = if app.p2pool_process_state.can_restart() {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        let controls = vec![
+            Line::from(vec![
+                Span::styled("[s] Start ", start_style),
+                Span::styled("[t] Stop ", stop_style),
+                Span::styled("[r] Restart", restart_style),
+            ]),
+            Line::from(""),
+            Line::from(status_line),
+        ];
+        let paragraph = Paragraph::new(controls)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" P2Poolv2 Process "),
+            )
+            .wrap(Wrap { trim: true });
         f.render_widget(paragraph, area);
     }
 
@@ -820,5 +875,55 @@ mod tests {
             P2PoolStatusView::format_timestamp(1_700_000_000_000),
             "11/14/2023, 10:13:20 PM"
         );
+    }
+
+    #[test]
+    fn render_dispatches_process_for_tab_three() {
+        let mut app = App::new();
+        app.p2pool_status_tab = 3;
+
+        let output = render_view(&app);
+
+        assert!(output.contains("P2Poolv2 Process"));
+        assert!(output.contains("[s] Start"));
+        assert!(output.contains("[t] Stop"));
+        assert!(output.contains("[r] Restart"));
+        assert!(output.contains("Process state: Stopped"));
+    }
+
+    #[test]
+    fn handle_process_input_start_when_stopped() {
+        use crossterm::event::KeyModifiers;
+
+        let mut app = App::new();
+        let key = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::empty());
+
+        let action = P2PoolStatusView::handle_process_input(&mut app, key);
+
+        assert!(matches!(action, AppAction::StartP2Pool));
+    }
+
+    #[test]
+    fn handle_process_input_ignores_stop_when_already_stopped() {
+        use crossterm::event::KeyModifiers;
+
+        let mut app = App::new();
+        let key = KeyEvent::new(KeyCode::Char('t'), KeyModifiers::empty());
+
+        let action = P2PoolStatusView::handle_process_input(&mut app, key);
+
+        assert!(matches!(action, AppAction::None));
+    }
+
+    #[test]
+    fn handle_process_input_ignores_unrelated_keys() {
+        use crossterm::event::KeyModifiers;
+
+        let mut app = App::new();
+        let key = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::empty());
+
+        let action = P2PoolStatusView::handle_process_input(&mut app, key);
+
+        assert!(matches!(action, AppAction::None));
     }
 }

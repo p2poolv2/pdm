@@ -46,7 +46,7 @@ pub const BITCOIN_STATUS_TABS: &[&str] = &["Chain Info", "System", "Logs", "Peer
 pub const MAX_BITCOIN_STATUS_TAB: usize = BITCOIN_STATUS_TABS.len() - 1;
 
 /// Tab labels for the P2Pool Status view
-pub const P2POOL_STATUS_TABS: &[&str] = &["Chain Info", "Shares", "Peers Info"];
+pub const P2POOL_STATUS_TABS: &[&str] = &["Chain Info", "Shares", "Peers Info", "Process"];
 
 pub const MAX_P2POOL_STATUS_TAB: usize = P2POOL_STATUS_TABS.len() - 1;
 
@@ -109,6 +109,9 @@ pub enum AppAction {
     StartBitcoinCore,
     StopBitcoinCore,
     RestartBitcoinCore,
+    StartP2Pool,
+    StopP2Pool,
+    RestartP2Pool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -142,6 +145,9 @@ pub struct App {
     pub bitcoin_process_manager: ProcessManager,
     pub bitcoin_process_state: ProcessState,
     pub bitcoin_process_error: Option<String>,
+    pub p2pool_process_manager: ProcessManager,
+    pub p2pool_process_state: ProcessState,
+    pub p2pool_process_error: Option<String>,
     pub bitcoin_log_path: Option<PathBuf>,
     pub bitcoin_log_lines: Vec<String>,
     pub bitcoin_log_status: String,
@@ -215,6 +221,9 @@ impl App {
             bitcoin_process_manager: ProcessManager::new(),
             bitcoin_process_state: ProcessState::Stopped,
             bitcoin_process_error: None,
+            p2pool_process_manager: ProcessManager::new(),
+            p2pool_process_state: ProcessState::Stopped,
+            p2pool_process_error: None,
             bitcoin_log_path: None,
             bitcoin_log_lines: Vec::new(),
             bitcoin_log_status: "No Bitcoin Core debug.log found.".to_string(),
@@ -367,6 +376,68 @@ impl App {
         let result = self.bitcoin_process_manager.restart(&mut command);
         self.bitcoin_process_state = self.bitcoin_process_manager.state();
         self.bitcoin_process_error = self.bitcoin_process_manager.error().map(str::to_string);
+        result
+    }
+
+    pub fn poll_p2pool_process(&mut self) {
+        self.p2pool_process_manager.poll();
+        self.p2pool_process_state = self.p2pool_process_manager.state();
+        self.p2pool_process_error = self.p2pool_process_manager.error().map(str::to_string);
+    }
+
+    pub fn start_p2pool_process(&mut self) -> anyhow::Result<()> {
+        let exe = self
+            .settings
+            .p2poolv2_path
+            .as_deref()
+            .unwrap_or(std::path::Path::new("p2poolv2"));
+        if self.settings.p2poolv2_path.is_some() && !exe.exists() {
+            let msg = format!("p2poolv2 not found at {}", exe.display());
+            self.p2pool_process_manager.mark_failed(&msg);
+            self.p2pool_process_state = self.p2pool_process_manager.state();
+            self.p2pool_process_error = self.p2pool_process_manager.error().map(str::to_string);
+            return Err(anyhow::anyhow!("{msg}"));
+        }
+        let mut command = self.p2pool_process_command();
+        let result = self.p2pool_process_manager.start(&mut command);
+        self.p2pool_process_state = self.p2pool_process_manager.state();
+        self.p2pool_process_error = self.p2pool_process_manager.error().map(str::to_string);
+        result
+    }
+
+    fn p2pool_process_command(&self) -> std::process::Command {
+        let exe = self
+            .settings
+            .p2poolv2_path
+            .clone()
+            .unwrap_or_else(|| std::path::PathBuf::from("p2poolv2"));
+        let mut cmd = std::process::Command::new(exe);
+
+        if let Some(conf) = &self.p2pool_conf_path {
+            cmd.arg("--config").arg(conf);
+        }
+
+        cmd.stdout(std::process::Stdio::null());
+        cmd.stderr(std::process::Stdio::null());
+        cmd
+    }
+
+    pub fn stop_p2pool_process(&mut self) -> anyhow::Result<()> {
+        let result = self.p2pool_process_manager.stop();
+        self.p2pool_process_state = self.p2pool_process_manager.state();
+        self.p2pool_process_error = self.p2pool_process_manager.error().map(str::to_string);
+        result
+    }
+
+    pub fn shutdown_p2pool_process(&mut self) {
+        let _ = self.stop_p2pool_process();
+    }
+
+    pub fn restart_p2pool_process(&mut self) -> anyhow::Result<()> {
+        let mut command = self.p2pool_process_command();
+        let result = self.p2pool_process_manager.restart(&mut command);
+        self.p2pool_process_state = self.p2pool_process_manager.state();
+        self.p2pool_process_error = self.p2pool_process_manager.error().map(str::to_string);
         result
     }
 
@@ -791,5 +862,65 @@ mod tests {
         assert!(app.bitcoin_chain_info.is_none());
         assert!(app.bitcoin_chain_info_error.is_none());
         assert!(app.bitcoin_chain_info_rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn start_p2pool_process_marks_failed_for_missing_configured_executable() {
+        let mut app = App::new();
+        app.settings.p2poolv2_path =
+            Some(std::path::PathBuf::from("/definitely/not/real/p2poolv2"));
+
+        let err = app.start_p2pool_process().unwrap_err();
+
+        assert_eq!(app.p2pool_process_state, ProcessState::Failed);
+        assert!(app.p2pool_process_error.is_some());
+        assert!(err.to_string().contains("not found at"));
+    }
+
+    #[test]
+    fn stop_p2pool_process_on_idle_is_a_noop() {
+        let mut app = App::new();
+
+        let result = app.stop_p2pool_process();
+
+        assert!(result.is_ok());
+        assert_eq!(app.p2pool_process_state, ProcessState::Stopped);
+    }
+
+    #[test]
+    fn poll_p2pool_process_reflects_manager_state() {
+        let mut app = App::new();
+        app.poll_p2pool_process();
+        assert_eq!(app.p2pool_process_state, ProcessState::Stopped);
+        assert!(app.p2pool_process_error.is_none());
+    }
+
+    #[test]
+    fn p2pool_process_command_uses_configured_executable_and_conf_flag() {
+        let mut app = App::new();
+        app.settings.p2poolv2_path = Some(std::path::PathBuf::from("/opt/p2poolv2/bin/p2poolv2"));
+        app.p2pool_conf_path = Some(std::path::PathBuf::from("/etc/p2poolv2/config.toml"));
+
+        let command = app.p2pool_process_command();
+
+        assert_eq!(
+            command.get_program(),
+            std::ffi::OsStr::new("/opt/p2poolv2/bin/p2poolv2")
+        );
+        let args: Vec<_> = command.get_args().collect();
+        assert_eq!(
+            args,
+            vec![
+                std::ffi::OsStr::new("--config"),
+                std::ffi::OsStr::new("/etc/p2poolv2/config.toml")
+            ]
+        );
+    }
+
+    #[test]
+    fn p2pool_process_command_falls_back_to_path_lookup_when_unset() {
+        let app = App::new();
+        let command = app.p2pool_process_command();
+        assert_eq!(command.get_program(), std::ffi::OsStr::new("p2poolv2"));
     }
 }

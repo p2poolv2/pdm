@@ -10,7 +10,7 @@ use ratatui::{
 };
 
 /// Number of settings fields.
-pub const FIELD_COUNT: usize = 8;
+pub const FIELD_COUNT: usize = 9;
 
 /// Describes how a settings field behaves when Enter is pressed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,6 +31,7 @@ pub const FIELDS: [(&str, FieldKind); FIELD_COUNT] = [
     ("Bitcoin Core log file", FieldKind::FilePicker),
     ("Settings directory", FieldKind::DirectoryPicker),
     ("Bitcoin Core executable", FieldKind::FilePicker),
+    ("P2Poolv2 executable", FieldKind::FilePicker),
 ];
 
 #[derive(Debug, Clone)]
@@ -113,6 +114,10 @@ impl SettingsView {
                 .map(|p| p.to_string_lossy().into_owned()),
             app.settings
                 .bitcoind_path
+                .as_ref()
+                .map(|p| p.to_string_lossy().into_owned()),
+            app.settings
+                .p2poolv2_path
                 .as_ref()
                 .map(|p| p.to_string_lossy().into_owned()),
         ];
@@ -350,5 +355,34 @@ mod tests {
             output.contains("/pdm/test-config"),
             "default config dir must appear when no override is set"
         );
+    }
+
+    #[test]
+    fn render_shows_p2poolv2_executable_value_when_set() {
+        use crate::app::App;
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut app = App::new();
+        app.settings.p2poolv2_path = Some(std::path::PathBuf::from("/opt/p2poolv2/bin/p2poolv2"));
+        app.settings_view.sidebar_focused = false;
+
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                SettingsView::render(f, &mut app, area);
+            })
+            .unwrap();
+
+        let output: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol().to_string())
+            .collect();
+
+        assert!(output.contains("p2poolv2") || output.contains("P2Poolv2 executable"));
     }
 }
