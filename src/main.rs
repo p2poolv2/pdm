@@ -23,8 +23,7 @@ use crossterm::{
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::{Terminal, backend::Backend, backend::CrosstermBackend};
-use std::io;
-use std::time::Duration;
+use std::{io, time::Duration};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -83,18 +82,20 @@ where
 {
     loop {
         app.poll_chain_info();
+        app.poll_share_info();
         app.poll_peer_info();
+        app.poll_live_p2pool_events();
         terminal.draw(|f| ui::ui(f, app))?;
 
-        if event::poll(Duration::from_millis(100))? {
-            if let Event::Key(key) = event::read()? {
-                match dispatch_key(key, app) {
-                    KeyOutcome::Ignored => {}
-                    KeyOutcome::Exit => return Ok(()),
-                    KeyOutcome::Action(action) => {
-                        if handle_action(action, app)?.is_break() {
-                            return Ok(());
-                        }
+        if event::poll(Duration::from_millis(100))?
+            && let Event::Key(key) = event::read()?
+        {
+            match dispatch_key(key, app) {
+                KeyOutcome::Ignored => {}
+                KeyOutcome::Exit => return Ok(()),
+                KeyOutcome::Action(action) => {
+                    if handle_action(action, app)?.is_break() {
+                        return Ok(());
                     }
                 }
             }
@@ -198,7 +199,7 @@ fn dispatch_key(key: event::KeyEvent, app: &mut App) -> KeyOutcome {
                     let entries = app
                         .p2pool_config
                         .as_ref()
-                        .map(|cfg| flatten_config(cfg))
+                        .map(flatten_config)
                         .unwrap_or_default();
                     app.p2pool_config_view.handle_input(key, &entries)
                 }
@@ -247,17 +248,17 @@ fn bootstrap_from_settings(app: &mut App) {
     }
 
     // P2Pool config — only set the path when the config is actually loadable
-    if let Some(path) = &app.settings.p2pool_conf_path.clone() {
-        if let Some(p) = path.to_str() {
-            match P2PoolConfig::load(p) {
-                Ok(cfg) => {
-                    app.p2pool_conf_path = Some(path.clone());
-                    app.p2pool_config = Some(cfg);
-                }
-                Err(e) => {
-                    eprintln!("pdm: failed to load p2pool config on startup: {e}");
-                    // Leave both as None so the view prompts the user to re-select
-                }
+    if let Some(path) = &app.settings.p2pool_conf_path.clone()
+        && let Some(p) = path.to_str()
+    {
+        match P2PoolConfig::load(p) {
+            Ok(cfg) => {
+                app.p2pool_conf_path = Some(path.clone());
+                app.p2pool_config = Some(cfg);
+            }
+            Err(e) => {
+                eprintln!("pdm: failed to load p2pool config on startup: {e}");
+                // Leave both as None so the view prompts the user to re-select
             }
         }
     }
@@ -283,7 +284,7 @@ fn handle_action(action: AppAction, app: &mut App) -> Result<ControlFlow<()>> {
         AppAction::OpenExplorerForSettings(field) => {
             let dir_select = FIELDS
                 .get(field)
-                .map_or(false, |f| matches!(f.1, FieldKind::DirectoryPicker));
+                .is_some_and(|f| matches!(f.1, FieldKind::DirectoryPicker));
             if app.explorer.allow_dir_select != dir_select {
                 app.explorer.allow_dir_select = dir_select;
                 app.explorer.load_directory();
@@ -1975,11 +1976,7 @@ port = 46884
 
     #[test]
     fn commit_p2pool_edit_success_clears_warning() {
-        use std::path::PathBuf;
-
         let mut app = App::new();
-        let path = PathBuf::from("dummy.toml");
-        write_valid_p2pool_toml(&path);
 
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("p2pool.toml");

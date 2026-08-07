@@ -1,5 +1,6 @@
 ---
 source: src/ui.rs
+assertion_line: 219
 expression: terminal.backend()
 ---
 TestBackend {
@@ -7,7 +8,7 @@ TestBackend {
         area: Rect { x: 0, y: 0, width: 80, height: 24 },
         content: [
             "┌ PDM ──────────────────┐┌ Info ───────────────────────────────────────────────┐",
-            "│Home                   ││ Chain Info │ Peers Info                             │",
+            "│Home                   ││ Chain Info │ Shares │ Peers Info                    │",
             "│Bitcoin Config         ││                                                     │",
             "│Bitcoin Status         │└─────────────────────────────────────────────────────┘",
             "│P2Pool Config          │┌ Chain Info ─────────────────────────────────────────┐",

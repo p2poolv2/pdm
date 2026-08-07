@@ -153,7 +153,7 @@ impl P2PoolConfigView {
         let entries: Vec<P2PoolConfigEntry> = app
             .p2pool_config
             .as_ref()
-            .map(|cfg| flatten_config(cfg))
+            .map(flatten_config)
             .unwrap_or_default();
 
         // Status bar (warning or save message)
@@ -404,10 +404,7 @@ port = 3030
         .unwrap();
 
         // keep dir alive until Config is loaded
-        let cfg = Config::load(path.to_str().unwrap()).expect("inline test config must parse");
-
-        // dir drops here but we already have cfg
-        cfg
+        Config::load(path.to_str().unwrap()).expect("inline test config must parse")
     }
 
     #[test]
@@ -586,11 +583,16 @@ port = 3030
     fn render_no_path_shows_prompt() {
         let backend = TestBackend::new(80, 10);
         let mut terminal = Terminal::new(backend).unwrap();
-        let mut app = App::default();
-        app.p2pool_conf_path = None;
-        app.p2pool_config_view.warning_message = None;
+        let mut app = App {
+            p2pool_conf_path: None,
+            p2pool_config_view: P2PoolConfigView {
+                warning_message: None,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
         terminal
-            .draw(|f| P2PoolConfigView::render(f, &mut app, f.size()))
+            .draw(|f| P2PoolConfigView::render(f, &mut app, f.area()))
             .unwrap();
         assert!(buffer_text(&terminal).contains("Press [Enter] to select"));
     }
@@ -599,11 +601,16 @@ port = 3030
     fn render_no_path_shows_warning_message() {
         let backend = TestBackend::new(80, 10);
         let mut terminal = Terminal::new(backend).unwrap();
-        let mut app = App::default();
-        app.p2pool_conf_path = None;
-        app.p2pool_config_view.warning_message = Some("File not found".into());
+        let mut app = App {
+            p2pool_conf_path: None,
+            p2pool_config_view: P2PoolConfigView {
+                warning_message: Some("File not found".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
         terminal
-            .draw(|f| P2PoolConfigView::render(f, &mut app, f.size()))
+            .draw(|f| P2PoolConfigView::render(f, &mut app, f.area()))
             .unwrap();
         assert!(buffer_text(&terminal).contains("File not found"));
     }
@@ -616,9 +623,10 @@ port = 3030
         let backend = TestBackend::new(120, 30);
         let mut terminal = Terminal::new(backend).unwrap();
 
-        let mut app = App::default();
-
-        app.p2pool_conf_path = Some(PathBuf::from("test.toml"));
+        let mut app = App {
+            p2pool_conf_path: Some(PathBuf::from("test.toml")),
+            ..Default::default()
+        };
 
         let cfg = make_config();
         app.p2pool_config = Some(cfg.clone());
@@ -633,7 +641,7 @@ port = 3030
         app.p2pool_config_view.edit_input = "secret123".into();
 
         terminal
-            .draw(|f| P2PoolConfigView::render(f, &mut app, f.size()))
+            .draw(|f| P2PoolConfigView::render(f, &mut app, f.area()))
             .unwrap();
 
         let text = buffer_text(&terminal);

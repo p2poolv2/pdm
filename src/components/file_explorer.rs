@@ -403,7 +403,7 @@ mod tests {
             explorer
                 .files
                 .iter()
-                .all(|p| !p.extension().is_some_and(|e| e == "txt")),
+                .all(|p| p.extension().is_none_or(|e| e != "txt")),
             "txt files must be hidden in dir-select mode"
         );
         // Subdirectories must still appear.

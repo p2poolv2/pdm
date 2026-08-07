@@ -710,10 +710,7 @@ port = 3030
         .unwrap();
 
         // keep dir alive until Config is loaded
-        let cfg = Config::load(path.to_str().unwrap()).expect("inline test config must parse");
-
-        // dir drops here but we already have cfg
-        cfg
+        Config::load(path.to_str().unwrap()).expect("inline test config must parse")
     }
 
     #[test]
