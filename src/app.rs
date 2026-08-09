@@ -717,4 +717,615 @@ mod tests {
         assert!(app.bitcoin_chain_info_error.is_none());
         assert!(app.bitcoin_chain_info_rx.try_recv().is_err());
     }
+
+    // P2Pool chain info polling
+
+    #[test]
+    fn poll_chain_info_updates_state_on_success() {
+        use crate::components::p2pool_client::ChainInfo;
+
+        let mut app = App::new();
+        app.p2pool_chain_info_error = Some("stale".to_string());
+
+        app.chain_info_tx
+            .send(Ok(ChainInfo {
+                genesis_blockhash: Some("genesis".to_string()),
+                chain_tip_height: Some(100),
+                total_work: "work".to_string(),
+                chain_tip_blockhash: Some("tip".to_string()),
+            }))
+            .unwrap();
+
+        app.poll_chain_info();
+
+        let info = app.chain_info.as_ref().unwrap();
+        assert_eq!(info.chain_tip_height, Some(100));
+        assert_eq!(info.total_work, "work");
+        assert!(app.p2pool_chain_info_error.is_none());
+    }
+
+    #[test]
+    fn poll_chain_info_updates_state_on_error() {
+        use crate::components::p2pool_client::ChainInfo;
+
+        let mut app = App::new();
+        app.chain_info = Some(ChainInfo {
+            genesis_blockhash: None,
+            chain_tip_height: Some(50),
+            total_work: "old".to_string(),
+            chain_tip_blockhash: None,
+        });
+
+        app.chain_info_tx
+            .send(Err(anyhow::anyhow!("connection refused")))
+            .unwrap();
+
+        app.poll_chain_info();
+
+        assert!(app.chain_info.is_none());
+        assert_eq!(
+            app.p2pool_chain_info_error.as_deref(),
+            Some("connection refused")
+        );
+    }
+
+    // Bitcoin log polling
+
+    #[test]
+    fn poll_bitcoin_logs_processes_matching_ok_snapshot() {
+        let mut app = App::new();
+        let path = PathBuf::from("/tmp/test/debug.log");
+        app.bitcoin_log_path = Some(path.clone());
+        app.bitcoin_log_auto_scroll = true;
+        app.bitcoin_log_scroll = 5;
+        app.bitcoin_log_refresh_in_progress = true;
+
+        app.bitcoin_log_tx
+            .send(BitcoinLogReadMessage {
+                path: path.clone(),
+                result: Ok(BitcoinLogSnapshot {
+                    path,
+                    lines: vec!["line1".to_string(), "line2".to_string()],
+                    file_size: 100,
+                }),
+            })
+            .unwrap();
+
+        app.poll_bitcoin_logs();
+
+        assert_eq!(app.bitcoin_log_lines, vec!["line1", "line2"]);
+        assert!(app.bitcoin_log_status.contains("Showing 2 recent lines"));
+        assert!(!app.bitcoin_log_refresh_in_progress);
+        assert!(app.bitcoin_log_last_refresh.is_some());
+        // auto_scroll is true, so scroll resets to 0
+        assert_eq!(app.bitcoin_log_scroll, 0);
+    }
+
+    #[test]
+    fn poll_bitcoin_logs_auto_scroll_disabled_preserves_scroll() {
+        let mut app = App::new();
+        let path = PathBuf::from("/tmp/test/debug.log");
+        app.bitcoin_log_path = Some(path.clone());
+        app.bitcoin_log_auto_scroll = false;
+        app.bitcoin_log_scroll = 10;
+
+        app.bitcoin_log_tx
+            .send(BitcoinLogReadMessage {
+                path: path.clone(),
+                result: Ok(BitcoinLogSnapshot {
+                    path,
+                    lines: vec!["line1".to_string()],
+                    file_size: 50,
+                }),
+            })
+            .unwrap();
+
+        app.poll_bitcoin_logs();
+
+        // auto_scroll is false, so scroll position stays
+        assert_eq!(app.bitcoin_log_scroll, 10);
+    }
+
+    #[test]
+    fn poll_bitcoin_logs_empty_snapshot_shows_empty_message() {
+        let mut app = App::new();
+        let path = PathBuf::from("/tmp/test/debug.log");
+        app.bitcoin_log_path = Some(path.clone());
+
+        app.bitcoin_log_tx
+            .send(BitcoinLogReadMessage {
+                path: path.clone(),
+                result: Ok(BitcoinLogSnapshot {
+                    path,
+                    lines: Vec::new(),
+                    file_size: 0,
+                }),
+            })
+            .unwrap();
+
+        app.poll_bitcoin_logs();
+
+        assert!(app.bitcoin_log_lines.is_empty());
+        assert!(app.bitcoin_log_status.contains("is empty"));
+    }
+
+    #[test]
+    fn poll_bitcoin_logs_ignores_non_matching_path() {
+        let mut app = App::new();
+        app.bitcoin_log_path = Some(PathBuf::from("/expected/debug.log"));
+        app.bitcoin_log_refresh_in_progress = true;
+
+        app.bitcoin_log_tx
+            .send(BitcoinLogReadMessage {
+                path: PathBuf::from("/wrong/debug.log"),
+                result: Ok(BitcoinLogSnapshot {
+                    path: PathBuf::from("/wrong/debug.log"),
+                    lines: vec!["should be ignored".to_string()],
+                    file_size: 10,
+                }),
+            })
+            .unwrap();
+
+        app.poll_bitcoin_logs();
+
+        // State unchanged — message for a different path is skipped
+        assert!(app.bitcoin_log_lines.is_empty());
+        assert!(app.bitcoin_log_refresh_in_progress);
+    }
+
+    #[test]
+    fn poll_bitcoin_logs_handles_error_result() {
+        let mut app = App::new();
+        let path = PathBuf::from("/tmp/test/debug.log");
+        app.bitcoin_log_path = Some(path.clone());
+        app.bitcoin_log_refresh_in_progress = true;
+
+        app.bitcoin_log_tx
+            .send(BitcoinLogReadMessage {
+                path,
+                result: Err(anyhow::anyhow!("file not found")),
+            })
+            .unwrap();
+
+        app.poll_bitcoin_logs();
+
+        assert!(app.bitcoin_log_status.contains("Log file unavailable"));
+        assert!(app.bitcoin_log_status.contains("file not found"));
+        assert!(!app.bitcoin_log_refresh_in_progress);
+        assert!(app.bitcoin_log_last_refresh.is_some());
+    }
+
+    // maybe_refresh_bitcoin_logs
+
+    #[test]
+    fn maybe_refresh_does_nothing_on_wrong_screen() {
+        let mut app = App::new();
+        app.current_screen = CurrentScreen::Home;
+        app.bitcoin_status_tab = 2;
+        app.bitcoin_log_last_refresh = None;
+
+        app.maybe_refresh_bitcoin_logs();
+
+        // No refresh triggered — wrong screen
+        assert!(!app.bitcoin_log_refresh_in_progress);
+    }
+
+    #[test]
+    fn maybe_refresh_does_nothing_on_wrong_tab() {
+        let mut app = App::new();
+        app.current_screen = CurrentScreen::BitcoinStatus;
+        app.bitcoin_status_tab = 0; // Chain Info, not Logs (tab 2)
+        app.bitcoin_log_last_refresh = None;
+
+        app.maybe_refresh_bitcoin_logs();
+
+        assert!(!app.bitcoin_log_refresh_in_progress);
+    }
+
+    // refresh_bitcoin_logs
+
+    #[test]
+    fn refresh_bitcoin_logs_skips_when_in_progress() {
+        let mut app = App::new();
+        app.bitcoin_log_refresh_in_progress = true;
+        let status_before = app.bitcoin_log_status.clone();
+
+        app.refresh_bitcoin_logs();
+
+        // Status unchanged because early return
+        assert_eq!(app.bitcoin_log_status, status_before);
+    }
+
+    #[test]
+    fn refresh_bitcoin_logs_with_path_sends_via_channel() {
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        let log_file = dir.path().join("debug.log");
+        std::fs::write(&log_file, "2026-01-01 test line\n").unwrap();
+
+        let mut app = App::new();
+        app.bitcoin_log_path = Some(log_file.clone());
+
+        // No tokio runtime → takes the synchronous fallback branch
+        app.refresh_bitcoin_logs();
+
+        assert!(app.bitcoin_log_refresh_in_progress);
+        assert!(app.bitcoin_log_status.contains("Reading"));
+
+        // The synchronous path sends a message through the channel
+        let message = app.bitcoin_log_rx.try_recv().unwrap();
+        assert_eq!(message.path, log_file);
+        assert!(message.result.is_ok());
+    }
+
+    // set_bitcoin_log_data_dir / set_bitcoin_log_file
+
+    #[test]
+    fn set_bitcoin_log_data_dir_updates_settings_and_resets_reader() {
+        let mut app = App::new();
+        app.bitcoin_log_lines = vec!["old log".to_string()];
+        app.bitcoin_log_scroll = 5;
+        app.settings.bitcoin_core_log_path = Some(PathBuf::from("/old/log.path"));
+
+        let data_dir = PathBuf::from("/tmp/bitcoin");
+        app.set_bitcoin_log_data_dir(data_dir.clone());
+
+        assert_eq!(app.settings.bitcoin_core_data_dir, Some(data_dir));
+        // log_path is cleared when data_dir is set
+        assert!(app.settings.bitcoin_core_log_path.is_none());
+        // reader is reset
+        assert!(app.bitcoin_log_lines.is_empty());
+        assert_eq!(app.bitcoin_log_scroll, 0);
+        assert!(app.bitcoin_log_path.is_some());
+    }
+
+    #[test]
+    fn set_bitcoin_log_file_updates_settings_and_resets_reader() {
+        let mut app = App::new();
+        app.bitcoin_log_lines = vec!["old log".to_string()];
+        app.bitcoin_log_scroll = 5;
+        app.settings.bitcoin_core_data_dir = Some(PathBuf::from("/old/data/dir"));
+
+        let log_file = PathBuf::from("/tmp/bitcoin/debug.log");
+        app.set_bitcoin_log_file(log_file.clone());
+
+        assert_eq!(app.settings.bitcoin_core_log_path, Some(log_file.clone()));
+        // data_dir is cleared when explicit log file is set
+        assert!(app.settings.bitcoin_core_data_dir.is_none());
+        assert_eq!(app.bitcoin_log_path, Some(log_file));
+        // reader is reset
+        assert!(app.bitcoin_log_lines.is_empty());
+        assert_eq!(app.bitcoin_log_scroll, 0);
+    }
+
+    // filtered_bitcoin_log_lines
+
+    #[test]
+    fn filtered_bitcoin_log_lines_returns_all_when_no_filter() {
+        let mut app = App::new();
+        app.bitcoin_log_lines = vec!["first".to_string(), "second".to_string()];
+        app.bitcoin_log_filter = String::new();
+
+        let result = app.filtered_bitcoin_log_lines();
+
+        assert_eq!(result, vec!["first", "second"]);
+    }
+
+    #[test]
+    fn filtered_bitcoin_log_lines_filters_case_insensitive() {
+        let mut app = App::new();
+        app.bitcoin_log_lines = vec![
+            "2026-01-01 UpdateTip: new best".to_string(),
+            "2026-01-01 Received block".to_string(),
+            "2026-01-01 updatetip: another".to_string(),
+        ];
+        app.bitcoin_log_filter = "UpdateTip".to_string();
+
+        let result = app.filtered_bitcoin_log_lines();
+
+        assert_eq!(result.len(), 2);
+        assert!(result[0].contains("UpdateTip"));
+        assert!(result[1].contains("updatetip"));
+    }
+
+    #[test]
+    fn filtered_bitcoin_log_lines_empty_lines_returns_empty() {
+        let app = App::new();
+        let result = app.filtered_bitcoin_log_lines();
+        assert!(result.is_empty());
+    }
+
+    // copy_filtered_bitcoin_logs
+
+    #[test]
+    fn copy_filtered_bitcoin_logs_no_lines_sets_status() {
+        let mut app = App::new();
+        // No log lines
+        app.copy_filtered_bitcoin_logs();
+
+        assert_eq!(app.bitcoin_log_status, "No Bitcoin Core log lines to copy.");
+    }
+
+    // peer info polling
+
+    #[test]
+    fn poll_peer_info_updates_state_on_success() {
+        use crate::components::p2pool_client::PeerInfo;
+
+        let mut app = App::new();
+        app.p2pool_peer_info_error = Some("stale".to_string());
+
+        app.peer_info_tx
+            .send(Ok(vec![PeerInfo {
+                peer_id: "peer1".to_string(),
+                status: Some("Connected".to_string()),
+            }]))
+            .unwrap();
+
+        app.poll_peer_info();
+
+        let peers = app.peer_info.as_ref().unwrap();
+        assert_eq!(peers.len(), 1);
+        assert_eq!(peers[0].peer_id, "peer1");
+        assert!(app.p2pool_peer_info_error.is_none());
+    }
+
+    #[test]
+    fn poll_peer_info_updates_state_on_error() {
+        use crate::components::p2pool_client::PeerInfo;
+
+        let mut app = App::new();
+        app.peer_info = Some(vec![PeerInfo {
+            peer_id: "old".to_string(),
+            status: None,
+        }]);
+
+        app.peer_info_tx
+            .send(Err(anyhow::anyhow!("timeout")))
+            .unwrap();
+
+        app.poll_peer_info();
+
+        assert!(app.peer_info.is_none());
+        assert_eq!(app.p2pool_peer_info_error.as_deref(), Some("timeout"));
+    }
+
+    // share info polling
+
+    #[test]
+    fn poll_share_info_updates_state_on_success() {
+        use crate::components::p2pool_client::SharesResponse;
+
+        let mut app = App::new();
+        app.p2pool_share_info_error = Some("stale".to_string());
+
+        app.share_info_tx
+            .send(Ok(SharesResponse {
+                from_height: 1,
+                to_height: 10,
+                shares: Vec::new(),
+            }))
+            .unwrap();
+
+        app.poll_share_info();
+
+        let info = app.share_info.as_ref().unwrap();
+        assert_eq!(info.from_height, 1);
+        assert_eq!(info.to_height, 10);
+        assert!(app.p2pool_share_info_error.is_none());
+    }
+
+    #[test]
+    fn poll_share_info_updates_state_on_error() {
+        use crate::components::p2pool_client::SharesResponse;
+
+        let mut app = App::new();
+        app.share_info = Some(SharesResponse {
+            from_height: 1,
+            to_height: 10,
+            shares: Vec::new(),
+        });
+
+        app.share_info_tx
+            .send(Err(anyhow::anyhow!("server error")))
+            .unwrap();
+
+        app.poll_share_info();
+
+        assert!(app.share_info.is_none());
+        assert_eq!(app.p2pool_share_info_error.as_deref(), Some("server error"));
+    }
+
+    // live P2Pool events
+
+    #[test]
+    fn poll_live_p2pool_events_adds_share() {
+        use crate::components::p2pool_websocket::{LiveP2PoolEvent, LiveShare};
+
+        let mut app = App::new();
+        app.p2pool_live_error = Some("old error".to_string());
+
+        app.p2pool_live_tx
+            .send(Ok(LiveP2PoolEvent::Share(LiveShare {
+                blockhash: "0000".to_string(),
+                prev_blockhash: "ffff".to_string(),
+                height: 42,
+                miner_address: "miner".to_string(),
+                timestamp: 1700000000,
+                bits: "1d00ffff".to_string(),
+                uncles: Vec::new(),
+            })))
+            .unwrap();
+
+        app.poll_live_p2pool_events();
+
+        assert_eq!(app.live_shares.len(), 1);
+        assert_eq!(app.live_shares[0].height, 42);
+        assert!(app.p2pool_live_error.is_none());
+    }
+
+    #[test]
+    fn poll_live_p2pool_events_adds_peer_and_updates_peer_info() {
+        use crate::components::p2pool_websocket::{LiveP2PoolEvent, LivePeerEvent};
+
+        let mut app = App::new();
+
+        app.p2pool_live_tx
+            .send(Ok(LiveP2PoolEvent::Peer(LivePeerEvent {
+                peer_id: "peer1".to_string(),
+                status: "Connected".to_string(),
+            })))
+            .unwrap();
+
+        app.poll_live_p2pool_events();
+
+        assert_eq!(app.live_peer_events.len(), 1);
+        assert_eq!(app.live_peer_events[0].peer_id, "peer1");
+        // apply_live_peer_event should have added the peer to peer_info
+        let peers = app.peer_info.as_ref().unwrap();
+        assert_eq!(peers.len(), 1);
+        assert_eq!(peers[0].peer_id, "peer1");
+        assert_eq!(peers[0].status.as_deref(), Some("Connected"));
+    }
+
+    #[test]
+    fn poll_live_p2pool_events_handles_error() {
+        let mut app = App::new();
+        app.p2pool_live_stream_started = true;
+
+        app.p2pool_live_tx
+            .send(Err(anyhow::anyhow!("websocket closed")))
+            .unwrap();
+
+        app.poll_live_p2pool_events();
+
+        assert_eq!(app.p2pool_live_error.as_deref(), Some("websocket closed"));
+        assert!(!app.p2pool_live_stream_started);
+    }
+
+    // apply_live_peer_event
+
+    #[test]
+    fn apply_live_peer_event_adds_new_peer() {
+        use crate::components::p2pool_websocket::LivePeerEvent;
+
+        let mut app = App::new();
+
+        app.apply_live_peer_event(&LivePeerEvent {
+            peer_id: "new_peer".to_string(),
+            status: "Connected".to_string(),
+        });
+
+        let peers = app.peer_info.as_ref().unwrap();
+        assert_eq!(peers.len(), 1);
+        assert_eq!(peers[0].peer_id, "new_peer");
+        assert_eq!(peers[0].status.as_deref(), Some("Connected"));
+    }
+
+    #[test]
+    fn apply_live_peer_event_updates_existing_peer() {
+        use crate::components::p2pool_client::PeerInfo;
+        use crate::components::p2pool_websocket::LivePeerEvent;
+
+        let mut app = App::new();
+        app.peer_info = Some(vec![PeerInfo {
+            peer_id: "peer1".to_string(),
+            status: Some("Connected".to_string()),
+        }]);
+
+        app.apply_live_peer_event(&LivePeerEvent {
+            peer_id: "peer1".to_string(),
+            status: "Syncing".to_string(),
+        });
+
+        let peers = app.peer_info.as_ref().unwrap();
+        assert_eq!(peers.len(), 1);
+        assert_eq!(peers[0].status.as_deref(), Some("Syncing"));
+    }
+
+    #[test]
+    fn apply_live_peer_event_disconnected_removes_peer() {
+        use crate::components::p2pool_client::PeerInfo;
+        use crate::components::p2pool_websocket::LivePeerEvent;
+
+        let mut app = App::new();
+        app.peer_info = Some(vec![
+            PeerInfo {
+                peer_id: "peer1".to_string(),
+                status: Some("Connected".to_string()),
+            },
+            PeerInfo {
+                peer_id: "peer2".to_string(),
+                status: Some("Connected".to_string()),
+            },
+        ]);
+
+        app.apply_live_peer_event(&LivePeerEvent {
+            peer_id: "peer1".to_string(),
+            status: "disconnected".to_string(),
+        });
+
+        let peers = app.peer_info.as_ref().unwrap();
+        assert_eq!(peers.len(), 1);
+        assert_eq!(peers[0].peer_id, "peer2");
+    }
+
+    // push_limited
+
+    #[test]
+    fn push_limited_within_capacity() {
+        let mut items = vec![1, 2, 3];
+        App::push_limited(&mut items, 4, 5);
+        assert_eq!(items, vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn push_limited_drains_oldest_when_over_capacity() {
+        let mut items = vec![1, 2, 3];
+        App::push_limited(&mut items, 4, 3);
+        assert_eq!(items, vec![2, 3, 4]);
+    }
+
+    #[test]
+    fn push_limited_handles_max_one() {
+        let mut items = vec![10];
+        App::push_limited(&mut items, 20, 1);
+        assert_eq!(items, vec![20]);
+    }
+
+    // resolve_bitcoin_log_path
+
+    #[test]
+    fn resolve_bitcoin_log_path_with_settings_log_path() {
+        let mut app = App::new();
+        app.settings.bitcoin_core_log_path = Some(PathBuf::from("/custom/debug.log"));
+
+        app.resolve_bitcoin_log_path();
+
+        assert_eq!(
+            app.bitcoin_log_path,
+            Some(PathBuf::from("/custom/debug.log"))
+        );
+        assert!(app.bitcoin_log_status.contains("Ready to read"));
+    }
+
+    // reset_bitcoin_log_reader
+
+    #[test]
+    fn reset_bitcoin_log_reader_clears_all_state() {
+        let mut app = App::new();
+        app.bitcoin_log_lines = vec!["old".to_string()];
+        app.bitcoin_log_scroll = 5;
+        app.bitcoin_log_refresh_in_progress = true;
+        app.bitcoin_log_last_refresh = Some(Instant::now());
+
+        app.reset_bitcoin_log_reader();
+
+        assert!(app.bitcoin_log_lines.is_empty());
+        assert_eq!(app.bitcoin_log_scroll, 0);
+        assert!(!app.bitcoin_log_refresh_in_progress);
+        assert!(app.bitcoin_log_last_refresh.is_none());
+        assert_eq!(app.bitcoin_log_status, "Ready to read Bitcoin Core logs.");
+    }
 }

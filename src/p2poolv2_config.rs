@@ -933,4 +933,319 @@ port = 3030
             "error message must mention index out of range"
         );
     }
+
+    /// Exercises every `dispatch_edit` match arm not already covered by
+    /// `apply_edit_covers_multiple_field_types`.
+    #[test]
+    fn dispatch_edit_covers_all_remaining_branches() {
+        let mut cfg = make_config();
+
+        // Helper to build a synthetic P2PoolConfigEntry for dispatch_edit
+        fn entry(section: ConfigSection, key: &str) -> P2PoolConfigEntry {
+            P2PoolConfigEntry {
+                section,
+                key: key.to_string(),
+                value: String::new(),
+                enabled: true,
+                schema: P2PoolFieldSchema {
+                    description: String::new(),
+                    kind: FieldKind::Required,
+                    type_hint: String::new(),
+                    sensitive: false,
+                },
+            }
+        }
+
+        // --- Stratum fields not covered by apply_edit_covers_multiple_field_types ---
+        dispatch_edit(
+            &mut cfg,
+            &entry(ConfigSection::Stratum, "start_difficulty"),
+            "500",
+        )
+        .unwrap();
+        assert_eq!(cfg.stratum.start_difficulty, 500);
+
+        dispatch_edit(
+            &mut cfg,
+            &entry(ConfigSection::Stratum, "minimum_difficulty"),
+            "50",
+        )
+        .unwrap();
+        assert_eq!(cfg.stratum.minimum_difficulty, 50);
+
+        // maximum_difficulty: set and clear
+        dispatch_edit(
+            &mut cfg,
+            &entry(ConfigSection::Stratum, "maximum_difficulty"),
+            "99999",
+        )
+        .unwrap();
+        assert_eq!(cfg.stratum.maximum_difficulty, Some(99999));
+        dispatch_edit(
+            &mut cfg,
+            &entry(ConfigSection::Stratum, "maximum_difficulty"),
+            "",
+        )
+        .unwrap();
+        assert!(cfg.stratum.maximum_difficulty.is_none());
+
+        // solo_address: set and clear
+        dispatch_edit(
+            &mut cfg,
+            &entry(ConfigSection::Stratum, "solo_address"),
+            "tb1qaddr",
+        )
+        .unwrap();
+        assert_eq!(cfg.stratum.solo_address.as_deref(), Some("tb1qaddr"));
+        dispatch_edit(&mut cfg, &entry(ConfigSection::Stratum, "solo_address"), "").unwrap();
+        assert!(cfg.stratum.solo_address.is_none());
+
+        dispatch_edit(
+            &mut cfg,
+            &entry(ConfigSection::Stratum, "zmqpubhashblock"),
+            "tcp://127.0.0.1:28333",
+        )
+        .unwrap();
+        assert_eq!(cfg.stratum.zmqpubhashblock, "tcp://127.0.0.1:28333");
+
+        dispatch_edit(
+            &mut cfg,
+            &entry(ConfigSection::Stratum, "bootstrap_address"),
+            "tb1qnew",
+        )
+        .unwrap();
+        assert_eq!(cfg.stratum.bootstrap_address, "tb1qnew");
+
+        // donation_address: set and clear
+        dispatch_edit(
+            &mut cfg,
+            &entry(ConfigSection::Stratum, "donation_address"),
+            "tb1qdonation",
+        )
+        .unwrap();
+        assert_eq!(
+            cfg.stratum.donation_address.as_deref(),
+            Some("tb1qdonation")
+        );
+        dispatch_edit(
+            &mut cfg,
+            &entry(ConfigSection::Stratum, "donation_address"),
+            "",
+        )
+        .unwrap();
+        assert!(cfg.stratum.donation_address.is_none());
+
+        // donation: already tested via apply_edit — but test clear path
+        dispatch_edit(&mut cfg, &entry(ConfigSection::Stratum, "donation"), "").unwrap();
+        assert!(cfg.stratum.donation.is_none());
+
+        // fee_address: set and clear
+        dispatch_edit(
+            &mut cfg,
+            &entry(ConfigSection::Stratum, "fee_address"),
+            "tb1qfee",
+        )
+        .unwrap();
+        assert_eq!(cfg.stratum.fee_address.as_deref(), Some("tb1qfee"));
+        dispatch_edit(&mut cfg, &entry(ConfigSection::Stratum, "fee_address"), "").unwrap();
+        assert!(cfg.stratum.fee_address.is_none());
+
+        // fee: set and clear
+        dispatch_edit(&mut cfg, &entry(ConfigSection::Stratum, "fee"), "100").unwrap();
+        assert_eq!(cfg.stratum.fee, Some(100));
+        dispatch_edit(&mut cfg, &entry(ConfigSection::Stratum, "fee"), "").unwrap();
+        assert!(cfg.stratum.fee.is_none());
+
+        dispatch_edit(
+            &mut cfg,
+            &entry(ConfigSection::Stratum, "difficulty_multiplier"),
+            "2.5",
+        )
+        .unwrap();
+        assert!((cfg.stratum.difficulty_multiplier - 2.5).abs() < f64::EPSILON);
+
+        // ignore_difficulty: set and clear
+        dispatch_edit(
+            &mut cfg,
+            &entry(ConfigSection::Stratum, "ignore_difficulty"),
+            "true",
+        )
+        .unwrap();
+        assert_eq!(cfg.stratum.ignore_difficulty, Some(true));
+        dispatch_edit(
+            &mut cfg,
+            &entry(ConfigSection::Stratum, "ignore_difficulty"),
+            "",
+        )
+        .unwrap();
+        assert!(cfg.stratum.ignore_difficulty.is_none());
+
+        // pool_signature: set (clear already covered)
+        dispatch_edit(
+            &mut cfg,
+            &entry(ConfigSection::Stratum, "pool_signature"),
+            "TestPool",
+        )
+        .unwrap();
+        assert_eq!(cfg.stratum.pool_signature.as_deref(), Some("TestPool"));
+
+        // --- BitcoinRPC ---
+        dispatch_edit(
+            &mut cfg,
+            &entry(ConfigSection::BitcoinRpc, "url"),
+            "http://localhost:8332",
+        )
+        .unwrap();
+        assert_eq!(cfg.bitcoinrpc.url, "http://localhost:8332");
+
+        dispatch_edit(
+            &mut cfg,
+            &entry(ConfigSection::BitcoinRpc, "username"),
+            "alice",
+        )
+        .unwrap();
+        assert_eq!(cfg.bitcoinrpc.username, "alice");
+
+        dispatch_edit(
+            &mut cfg,
+            &entry(ConfigSection::BitcoinRpc, "password"),
+            "secret",
+        )
+        .unwrap();
+        assert_eq!(cfg.bitcoinrpc.password, "secret");
+
+        // --- Network ---
+        dispatch_edit(
+            &mut cfg,
+            &entry(ConfigSection::Network, "listen_address"),
+            "0.0.0.0:9333",
+        )
+        .unwrap();
+        assert_eq!(cfg.network.listen_address, "0.0.0.0:9333");
+
+        // dial_peers: empty string → empty vec
+        dispatch_edit(&mut cfg, &entry(ConfigSection::Network, "dial_peers"), "").unwrap();
+        assert!(cfg.network.dial_peers.is_empty());
+
+        dispatch_edit(
+            &mut cfg,
+            &entry(ConfigSection::Network, "max_established_incoming"),
+            "100",
+        )
+        .unwrap();
+        assert_eq!(cfg.network.max_established_incoming, 100);
+
+        dispatch_edit(
+            &mut cfg,
+            &entry(ConfigSection::Network, "max_established_outgoing"),
+            "200",
+        )
+        .unwrap();
+        assert_eq!(cfg.network.max_established_outgoing, 200);
+
+        dispatch_edit(
+            &mut cfg,
+            &entry(ConfigSection::Network, "max_established_per_peer"),
+            "3",
+        )
+        .unwrap();
+        assert_eq!(cfg.network.max_established_per_peer, 3);
+
+        dispatch_edit(
+            &mut cfg,
+            &entry(ConfigSection::Network, "dial_timeout_secs"),
+            "60",
+        )
+        .unwrap();
+        assert_eq!(cfg.network.dial_timeout_secs, 60);
+
+        dispatch_edit(
+            &mut cfg,
+            &entry(ConfigSection::Network, "max_requests_per_second"),
+            "10",
+        )
+        .unwrap();
+        assert_eq!(cfg.network.max_requests_per_second, 10);
+
+        // --- Store ---
+        dispatch_edit(
+            &mut cfg,
+            &entry(ConfigSection::Store, "path"),
+            "/data/store",
+        )
+        .unwrap();
+        assert_eq!(cfg.store.path, "/data/store");
+
+        dispatch_edit(
+            &mut cfg,
+            &entry(ConfigSection::Store, "background_task_frequency_hours"),
+            "2",
+        )
+        .unwrap();
+        assert_eq!(cfg.store.background_task_frequency_hours, 2);
+
+        dispatch_edit(
+            &mut cfg,
+            &entry(ConfigSection::Store, "pplns_ttl_days"),
+            "14",
+        )
+        .unwrap();
+        assert_eq!(cfg.store.pplns_ttl_days, 14);
+
+        // --- Logging ---
+        dispatch_edit(
+            &mut cfg,
+            &entry(ConfigSection::Logging, "file"),
+            "/var/log/p2pool.log",
+        )
+        .unwrap();
+        assert_eq!(cfg.logging.file.as_deref(), Some("/var/log/p2pool.log"));
+        dispatch_edit(&mut cfg, &entry(ConfigSection::Logging, "file"), "").unwrap();
+        assert!(cfg.logging.file.is_none());
+
+        dispatch_edit(&mut cfg, &entry(ConfigSection::Logging, "level"), "debug").unwrap();
+        assert_eq!(cfg.logging.level, "debug");
+
+        dispatch_edit(
+            &mut cfg,
+            &entry(ConfigSection::Logging, "stats_dir"),
+            "/stats",
+        )
+        .unwrap();
+        assert_eq!(cfg.logging.stats_dir, "/stats");
+
+        // console: clear path
+        dispatch_edit(&mut cfg, &entry(ConfigSection::Logging, "console"), "").unwrap();
+        assert!(cfg.logging.console.is_none());
+
+        // --- API ---
+        dispatch_edit(&mut cfg, &entry(ConfigSection::Api, "hostname"), "0.0.0.0").unwrap();
+        assert_eq!(cfg.api.hostname, "0.0.0.0");
+
+        dispatch_edit(&mut cfg, &entry(ConfigSection::Api, "port"), "8080").unwrap();
+        assert_eq!(cfg.api.port, 8080);
+
+        // auth_user: set and clear
+        dispatch_edit(&mut cfg, &entry(ConfigSection::Api, "auth_user"), "admin").unwrap();
+        assert_eq!(cfg.api.auth_user.as_deref(), Some("admin"));
+        dispatch_edit(&mut cfg, &entry(ConfigSection::Api, "auth_user"), "").unwrap();
+        assert!(cfg.api.auth_user.is_none());
+
+        // auth_token: set and clear
+        dispatch_edit(&mut cfg, &entry(ConfigSection::Api, "auth_token"), "tok123").unwrap();
+        assert_eq!(cfg.api.auth_token.as_deref(), Some("tok123"));
+        dispatch_edit(&mut cfg, &entry(ConfigSection::Api, "auth_token"), "").unwrap();
+        assert!(cfg.api.auth_token.is_none());
+
+        // auth_password: set and clear
+        dispatch_edit(
+            &mut cfg,
+            &entry(ConfigSection::Api, "auth_password"),
+            "pass",
+        )
+        .unwrap();
+        assert_eq!(cfg.api.auth_password.as_deref(), Some("pass"));
+        dispatch_edit(&mut cfg, &entry(ConfigSection::Api, "auth_password"), "").unwrap();
+        assert!(cfg.api.auth_password.is_none());
+    }
 }
