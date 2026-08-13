@@ -288,4 +288,111 @@ mod tests {
         assert!(output.contains("Initial Block Download : no"));
         assert!(output.contains("Connection Count       : -"));
     }
+
+    /// Renders the Peers tab (index 3) and returns the buffer content as a string.
+    fn render_peers_view(app: &App) -> String {
+        let backend = TestBackend::new(80, 25);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let area = Rect::new(0, 0, 80, 25);
+
+        terminal
+            .draw(|f| BitcoinStatusView::render(f, app, area))
+            .unwrap();
+
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect()
+    }
+
+    #[test]
+    fn peers_renders_prompt_when_no_bitcoin_conf_is_selected() {
+        let mut app = App::new();
+        app.bitcoin_status_tab = 3;
+
+        let output = render_peers_view(&app);
+
+        assert!(output.contains("Select a bitcoin.conf file to load Bitcoin Core peer info."));
+        assert!(!output.contains("Loading Bitcoin peer info"));
+        assert!(!output.contains("Failed to fetch Bitcoin peer info"));
+    }
+
+    #[test]
+    fn peers_renders_populated_address_list() {
+        let mut app = App::new();
+        app.bitcoin_status_tab = 3;
+        app.bitcoin_conf_path = Some(PathBuf::from("/tmp/bitcoin.conf"));
+        app.bitcoin_chain_info = Some(BitcoinChainInfo {
+            network: "mainnet".to_string(),
+            block_height: 850_000,
+            best_block_hash: "abc123".to_string(),
+            verification_progress: Some(0.99),
+            initial_block_download: Some(false),
+            connection_count: Some(3),
+            connected_peer_addresses: vec![
+                "192.168.1.100:8333".to_string(),
+                "10.0.0.5:8333".to_string(),
+            ],
+        });
+
+        let output = render_peers_view(&app);
+
+        assert!(output.contains("Connected Peers: 2"));
+        assert!(output.contains("Peer Addresses:"));
+        assert!(output.contains("* 192.168.1.100:8333"));
+        assert!(output.contains("* 10.0.0.5:8333"));
+        assert!(!output.contains("None"));
+    }
+
+    #[test]
+    fn peers_renders_none_when_address_list_is_empty() {
+        let mut app = App::new();
+        app.bitcoin_status_tab = 3;
+        app.bitcoin_conf_path = Some(PathBuf::from("/tmp/bitcoin.conf"));
+        app.bitcoin_chain_info = Some(BitcoinChainInfo {
+            network: "mainnet".to_string(),
+            block_height: 850_000,
+            best_block_hash: "abc123".to_string(),
+            verification_progress: Some(0.99),
+            initial_block_download: Some(false),
+            connection_count: Some(0),
+            connected_peer_addresses: vec![],
+        });
+
+        let output = render_peers_view(&app);
+
+        assert!(output.contains("Connected Peers: 0"));
+        assert!(output.contains("Peer Addresses:"));
+        assert!(output.contains("None"));
+    }
+
+    #[test]
+    fn peers_renders_loading_state_when_chain_info_is_pending() {
+        let mut app = App::new();
+        app.bitcoin_status_tab = 3;
+        app.bitcoin_conf_path = Some(PathBuf::from("/tmp/bitcoin.conf"));
+
+        let output = render_peers_view(&app);
+
+        assert!(output.contains("Loading Bitcoin peer info..."));
+        assert!(!output.contains("Select a bitcoin.conf file"));
+        assert!(!output.contains("Failed to fetch Bitcoin peer info"));
+    }
+
+    #[test]
+    fn peers_renders_error_state_when_chain_info_fetch_fails() {
+        let mut app = App::new();
+        app.bitcoin_status_tab = 3;
+        app.bitcoin_conf_path = Some(PathBuf::from("/tmp/bitcoin.conf"));
+        app.bitcoin_chain_info_error = Some("connection refused".to_string());
+
+        let output = render_peers_view(&app);
+
+        assert!(output.contains("Failed to fetch Bitcoin peer info: connection refused"));
+        assert!(!output.contains("Loading Bitcoin peer info"));
+        assert!(!output.contains("Connected Peers"));
+    }
 }
