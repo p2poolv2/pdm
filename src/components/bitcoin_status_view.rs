@@ -453,15 +453,19 @@ impl Default for BitcoinStatusView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::App;
+    use crate::app::{App, AppAction, BitcoinLogInputMode, ExplorerTrigger};
     use crate::components::bitcoin_client::BitcoinChainInfo;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::{Terminal, backend::TestBackend, prelude::Rect};
     use std::path::PathBuf;
 
+    const LOGS_TAB: usize = 2;
+    const PEERS_TAB: usize = 3;
+
     fn render_view(app: &App) -> String {
-        let backend = TestBackend::new(80, 25);
+        let backend = TestBackend::new(100, 25);
         let mut terminal = Terminal::new(backend).unwrap();
-        let area = Rect::new(0, 0, 80, 25);
+        let area = Rect::new(0, 0, 100, 25);
 
         terminal
             .draw(|f| BitcoinStatusView::render(f, app, area))
@@ -474,6 +478,574 @@ mod tests {
             .iter()
             .map(|cell| cell.symbol())
             .collect()
+    }
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::empty())
+    }
+
+    fn modified_key(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
+        KeyEvent::new(code, modifiers)
+    }
+
+    fn assert_none(action: AppAction) {
+        assert!(matches!(action, AppAction::None));
+    }
+
+    fn chain_info_with_peers(peer_addresses: &[&str]) -> BitcoinChainInfo {
+        BitcoinChainInfo {
+            network: "mainnet".to_string(),
+            block_height: 850_000,
+            best_block_hash: "abc123".to_string(),
+            verification_progress: Some(0.9123),
+            initial_block_download: Some(true),
+            connection_count: Some(peer_addresses.len() as u64),
+            connected_peer_addresses: peer_addresses
+                .iter()
+                .map(|address| (*address).to_string())
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn new_and_default_construct_status_view() {
+        let view = BitcoinStatusView::new();
+        let default_view = BitcoinStatusView::default();
+
+        assert_eq!(format!("{view:?}"), "BitcoinStatusView");
+        assert_eq!(format!("{default_view:?}"), "BitcoinStatusView");
+    }
+
+    #[test]
+    fn render_dispatches_system_tab() {
+        let mut app = App::new();
+        app.bitcoin_status_tab = 1;
+
+        let output = render_view(&app);
+
+        assert!(output.contains("System"));
+        assert!(!output.contains("Loading Bitcoin chain info"));
+        assert!(!output.contains("debug.log"));
+    }
+
+    #[test]
+    fn render_with_unknown_tab_only_renders_tabs() {
+        let mut app = App::new();
+        app.bitcoin_status_tab = 99;
+
+        let output = render_view(&app);
+
+        assert!(output.contains("Chain Info"));
+        assert!(output.contains("System"));
+        assert!(output.contains("Logs"));
+        assert!(output.contains("Peers"));
+        assert!(!output.contains("Loading Bitcoin chain info"));
+        assert!(!output.contains("Bitcoin Core Logs"));
+        assert!(!output.contains("Loading Bitcoin peer info"));
+    }
+
+    #[test]
+    fn log_shortcuts_start_input_modes_with_existing_values() {
+        let mut app = App::new();
+        let log_path = PathBuf::from("bitcoin").join("debug.log");
+        let data_dir = PathBuf::from("bitcoin-data");
+        let log_path_text = log_path.to_string_lossy().into_owned();
+        let data_dir_text = data_dir.to_string_lossy().into_owned();
+        app.bitcoin_log_filter = "UpdateTip".to_string();
+        app.bitcoin_log_path = Some(log_path);
+        app.settings.bitcoin_core_data_dir = Some(data_dir);
+
+        assert_none(BitcoinStatusView::handle_logs_input(
+            &mut app,
+            key(KeyCode::Char('/')),
+        ));
+        assert_eq!(
+            app.bitcoin_log_input_mode,
+            Some(BitcoinLogInputMode::Search)
+        );
+        assert_eq!(app.bitcoin_log_input, "UpdateTip");
+
+        app.bitcoin_log_input_mode = None;
+        app.bitcoin_log_input.clear();
+
+        assert_none(BitcoinStatusView::handle_logs_input(
+            &mut app,
+            key(KeyCode::Char('p')),
+        ));
+        assert_eq!(
+            app.bitcoin_log_input_mode,
+            Some(BitcoinLogInputMode::LogFilePath)
+        );
+        assert_eq!(app.bitcoin_log_input, log_path_text);
+
+        app.bitcoin_log_input_mode = None;
+        app.bitcoin_log_input.clear();
+
+        assert_none(BitcoinStatusView::handle_logs_input(
+            &mut app,
+            key(KeyCode::Char('g')),
+        ));
+        assert_eq!(
+            app.bitcoin_log_input_mode,
+            Some(BitcoinLogInputMode::DataDirPath)
+        );
+        assert_eq!(app.bitcoin_log_input, data_dir_text);
+    }
+
+    #[test]
+    fn log_path_shortcuts_use_empty_input_when_paths_are_unconfigured() {
+        let mut app = App::new();
+
+        assert_none(BitcoinStatusView::handle_logs_input(
+            &mut app,
+            key(KeyCode::Char('p')),
+        ));
+        assert_eq!(
+            app.bitcoin_log_input_mode,
+            Some(BitcoinLogInputMode::LogFilePath)
+        );
+        assert!(app.bitcoin_log_input.is_empty());
+
+        app.bitcoin_log_input_mode = None;
+
+        assert_none(BitcoinStatusView::handle_logs_input(
+            &mut app,
+            key(KeyCode::Char('d')),
+        ));
+        assert_eq!(
+            app.bitcoin_log_input_mode,
+            Some(BitcoinLogInputMode::DataDirPath)
+        );
+        assert!(app.bitcoin_log_input.is_empty());
+    }
+
+    #[test]
+    fn log_shortcuts_return_app_actions() {
+        let mut app = App::new();
+
+        let action = BitcoinStatusView::handle_logs_input(&mut app, key(KeyCode::Char('b')));
+        assert!(matches!(
+            action,
+            AppAction::OpenExplorer(ExplorerTrigger::BitcoinCoreLogFile)
+        ));
+
+        let action = BitcoinStatusView::handle_logs_input(&mut app, key(KeyCode::Char('o')));
+        assert!(matches!(
+            action,
+            AppAction::OpenExplorer(ExplorerTrigger::BitcoinCoreDataDir)
+        ));
+
+        let action = BitcoinStatusView::handle_logs_input(&mut app, key(KeyCode::Char('r')));
+        assert!(matches!(action, AppAction::RefreshBitcoinLogs));
+
+        let action = BitcoinStatusView::handle_logs_input(&mut app, key(KeyCode::Char('a')));
+        assert!(matches!(action, AppAction::ToggleBitcoinLogAutoScroll));
+
+        let action = BitcoinStatusView::handle_logs_input(&mut app, key(KeyCode::Char('c')));
+        assert!(matches!(action, AppAction::CopyBitcoinLogs));
+    }
+
+    #[test]
+    fn escape_clears_existing_log_filter_and_scroll() {
+        let mut app = App::new();
+        app.bitcoin_log_filter = "error".to_string();
+        app.bitcoin_log_scroll = 12;
+
+        assert_none(BitcoinStatusView::handle_logs_input(
+            &mut app,
+            key(KeyCode::Esc),
+        ));
+
+        assert!(app.bitcoin_log_filter.is_empty());
+        assert_eq!(app.bitcoin_log_scroll, 0);
+    }
+
+    #[test]
+    fn unhandled_log_key_is_noop() {
+        let mut app = App::new();
+        app.bitcoin_log_scroll = 3;
+
+        assert_none(BitcoinStatusView::handle_logs_input(
+            &mut app,
+            key(KeyCode::F(1)),
+        ));
+
+        assert_eq!(app.bitcoin_log_scroll, 3);
+        assert!(app.bitcoin_log_input_mode.is_none());
+    }
+
+    #[test]
+    fn log_scroll_keys_update_scroll_and_auto_scroll() {
+        let mut app = App::new();
+        app.bitcoin_log_lines = vec![
+            "first".to_string(),
+            "second".to_string(),
+            "third".to_string(),
+        ];
+        app.bitcoin_log_scroll = 1;
+        app.bitcoin_log_auto_scroll = false;
+
+        assert_none(BitcoinStatusView::handle_logs_input(
+            &mut app,
+            key(KeyCode::Up),
+        ));
+        assert_eq!(app.bitcoin_log_scroll, 0);
+        assert!(app.bitcoin_log_auto_scroll);
+
+        assert_none(BitcoinStatusView::handle_logs_input(
+            &mut app,
+            key(KeyCode::Down),
+        ));
+        assert_eq!(app.bitcoin_log_scroll, 1);
+        assert!(!app.bitcoin_log_auto_scroll);
+
+        assert_none(BitcoinStatusView::handle_logs_input(
+            &mut app,
+            key(KeyCode::PageDown),
+        ));
+        assert_eq!(app.bitcoin_log_scroll, 2);
+        assert!(!app.bitcoin_log_auto_scroll);
+
+        assert_none(BitcoinStatusView::handle_logs_input(
+            &mut app,
+            key(KeyCode::PageUp),
+        ));
+        assert_eq!(app.bitcoin_log_scroll, 0);
+        assert!(app.bitcoin_log_auto_scroll);
+
+        app.bitcoin_log_scroll = 1;
+        app.bitcoin_log_auto_scroll = false;
+        assert_none(BitcoinStatusView::handle_logs_input(
+            &mut app,
+            key(KeyCode::Home),
+        ));
+        assert_eq!(app.bitcoin_log_scroll, 0);
+        assert!(app.bitcoin_log_auto_scroll);
+
+        assert_none(BitcoinStatusView::handle_logs_input(
+            &mut app,
+            key(KeyCode::End),
+        ));
+        assert_eq!(app.bitcoin_log_scroll, 2);
+        assert!(!app.bitcoin_log_auto_scroll);
+    }
+
+    #[test]
+    fn log_scroll_helpers_clamp_to_available_lines_and_u16_max() {
+        let mut app = App::new();
+        app.bitcoin_log_lines = vec!["first".to_string(), "second".to_string()];
+        app.bitcoin_log_scroll = 1;
+
+        assert_eq!(BitcoinStatusView::max_scroll(&app), 1);
+        assert_eq!(BitcoinStatusView::next_scroll(&app, 10), 1);
+
+        app.bitcoin_log_lines = (0..70_000).map(|index| format!("line {index}")).collect();
+        app.bitcoin_log_scroll = u16::MAX - 1;
+
+        assert_eq!(BitcoinStatusView::max_scroll(&app), u16::MAX);
+        assert_eq!(BitcoinStatusView::next_scroll(&app, 10), u16::MAX);
+    }
+
+    #[test]
+    fn search_input_enter_applies_trimmed_filter_and_resets_scroll() {
+        let mut app = App::new();
+        app.bitcoin_log_input_mode = Some(BitcoinLogInputMode::Search);
+        app.bitcoin_log_input = "  UpdateTip  ".to_string();
+        app.bitcoin_log_scroll = 7;
+
+        assert_none(BitcoinStatusView::handle_logs_input(
+            &mut app,
+            key(KeyCode::Enter),
+        ));
+
+        assert_eq!(app.bitcoin_log_filter, "UpdateTip");
+        assert_eq!(app.bitcoin_log_scroll, 0);
+        assert!(app.bitcoin_log_input.is_empty());
+        assert!(app.bitcoin_log_input_mode.is_none());
+    }
+
+    #[test]
+    fn log_file_input_enter_rejects_empty_path() {
+        let mut app = App::new();
+        app.bitcoin_log_input_mode = Some(BitcoinLogInputMode::LogFilePath);
+        app.bitcoin_log_input = "   ".to_string();
+
+        assert_none(BitcoinStatusView::handle_logs_input(
+            &mut app,
+            key(KeyCode::Enter),
+        ));
+
+        assert_eq!(app.bitcoin_log_status, "Log file path cannot be empty.");
+        assert!(app.bitcoin_log_input.is_empty());
+        assert!(app.bitcoin_log_input_mode.is_none());
+    }
+
+    #[test]
+    fn log_file_input_enter_returns_set_log_file_action() {
+        let mut app = App::new();
+        app.bitcoin_log_input_mode = Some(BitcoinLogInputMode::LogFilePath);
+        app.bitcoin_log_input = "bitcoin/debug.log".to_string();
+
+        let action = BitcoinStatusView::handle_logs_input(&mut app, key(KeyCode::Enter));
+
+        assert!(matches!(
+            action,
+            AppAction::SetBitcoinLogFile(ref path)
+                if path == &PathBuf::from("bitcoin/debug.log")
+        ));
+        assert!(app.bitcoin_log_input.is_empty());
+        assert!(app.bitcoin_log_input_mode.is_none());
+    }
+
+    #[test]
+    fn data_dir_input_enter_rejects_empty_path() {
+        let mut app = App::new();
+        app.bitcoin_log_input_mode = Some(BitcoinLogInputMode::DataDirPath);
+        app.bitcoin_log_input = "	".to_string();
+
+        assert_none(BitcoinStatusView::handle_logs_input(
+            &mut app,
+            key(KeyCode::Enter),
+        ));
+
+        assert_eq!(
+            app.bitcoin_log_status,
+            "Bitcoin Core data directory cannot be empty."
+        );
+        assert!(app.bitcoin_log_input.is_empty());
+        assert!(app.bitcoin_log_input_mode.is_none());
+    }
+
+    #[test]
+    fn data_dir_input_enter_returns_set_data_dir_action() {
+        let mut app = App::new();
+        app.bitcoin_log_input_mode = Some(BitcoinLogInputMode::DataDirPath);
+        app.bitcoin_log_input = "bitcoin-data".to_string();
+
+        let action = BitcoinStatusView::handle_logs_input(&mut app, key(KeyCode::Enter));
+
+        assert!(matches!(
+            action,
+            AppAction::SetBitcoinLogDataDir(ref path)
+                if path == &PathBuf::from("bitcoin-data")
+        ));
+        assert!(app.bitcoin_log_input.is_empty());
+        assert!(app.bitcoin_log_input_mode.is_none());
+    }
+
+    #[test]
+    fn text_input_editing_keys_update_or_cancel_current_prompt() {
+        let mut app = App::new();
+        app.bitcoin_log_input_mode = Some(BitcoinLogInputMode::Search);
+        app.bitcoin_log_input = "err".to_string();
+
+        assert_none(BitcoinStatusView::handle_logs_input(
+            &mut app,
+            key(KeyCode::Char('o')),
+        ));
+        assert_eq!(app.bitcoin_log_input, "erro");
+
+        assert_none(BitcoinStatusView::handle_logs_input(
+            &mut app,
+            key(KeyCode::Backspace),
+        ));
+        assert_eq!(app.bitcoin_log_input, "err");
+
+        assert_none(BitcoinStatusView::handle_logs_input(
+            &mut app,
+            modified_key(KeyCode::Char('x'), KeyModifiers::CONTROL),
+        ));
+        assert_eq!(app.bitcoin_log_input, "err");
+
+        assert_none(BitcoinStatusView::handle_logs_input(
+            &mut app,
+            key(KeyCode::F(1)),
+        ));
+        assert_eq!(app.bitcoin_log_input, "err");
+
+        assert_none(BitcoinStatusView::handle_logs_input(
+            &mut app,
+            key(KeyCode::Esc),
+        ));
+        assert!(app.bitcoin_log_input.is_empty());
+        assert!(app.bitcoin_log_input_mode.is_none());
+    }
+
+    #[test]
+    fn input_title_matches_active_prompt_mode() {
+        assert_eq!(
+            BitcoinStatusView::input_title(Some(BitcoinLogInputMode::Search)),
+            " Search/filter logs "
+        );
+        assert_eq!(
+            BitcoinStatusView::input_title(Some(BitcoinLogInputMode::LogFilePath)),
+            " Bitcoin Core debug.log path "
+        );
+        assert_eq!(
+            BitcoinStatusView::input_title(Some(BitcoinLogInputMode::DataDirPath)),
+            " Bitcoin Core data directory "
+        );
+        assert_eq!(BitcoinStatusView::input_title(None), " Input ");
+    }
+
+    #[test]
+    fn render_logs_shows_summary_and_no_path_message() {
+        let mut app = App::new();
+        app.bitcoin_status_tab = LOGS_TAB;
+        app.bitcoin_log_status = "Waiting for logs.".to_string();
+
+        let output = render_view(&app);
+
+        assert!(output.contains("Bitcoin Core Logs"));
+        assert!(output.contains("(not configured)"));
+        assert!(output.contains("Waiting for logs."));
+        assert!(output.contains("Filter: (none)"));
+        assert!(output.contains("Auto-scroll: on"));
+        assert!(output.contains("Lines: 0/0"));
+        assert!(output.contains("[b] Browse log"));
+        assert!(output.contains("[c] Copy"));
+        assert!(output.contains(
+            "No Bitcoin Core debug.log found. Choose a log file or Bitcoin data directory."
+        ));
+    }
+
+    #[test]
+    fn render_logs_shows_empty_snapshot_status_when_log_file_has_no_lines() {
+        let mut app = App::new();
+        app.bitcoin_status_tab = LOGS_TAB;
+        app.bitcoin_log_path = Some(PathBuf::from("debug.log"));
+        app.bitcoin_log_status = "debug.log is empty.".to_string();
+
+        let output = render_view(&app);
+
+        assert!(output.contains("debug.log"));
+        assert!(output.contains("debug.log is empty."));
+        assert!(!output.contains("No Bitcoin Core debug.log found"));
+    }
+
+    #[test]
+    fn render_logs_applies_filter_counts_and_shows_matching_lines() {
+        let mut app = App::new();
+        app.bitcoin_status_tab = LOGS_TAB;
+        app.bitcoin_log_path = Some(PathBuf::from("debug.log"));
+        app.bitcoin_log_status = "Showing recent lines.".to_string();
+        app.bitcoin_log_auto_scroll = false;
+        app.bitcoin_log_filter = "updatetip".to_string();
+        app.bitcoin_log_lines = vec![
+            "2026-01-01 UpdateTip: new best block".to_string(),
+            "2026-01-01 socket connected".to_string(),
+        ];
+
+        let output = render_view(&app);
+
+        assert!(output.contains("Filter: updatetip"));
+        assert!(output.contains("Auto-scroll: off"));
+        assert!(output.contains("Lines: 1/2"));
+        assert!(output.contains("UpdateTip: new best block"));
+        assert!(!output.contains("socket connected"));
+    }
+
+    #[test]
+    fn render_logs_shows_empty_filter_state_when_no_lines_match() {
+        let mut app = App::new();
+        app.bitcoin_status_tab = LOGS_TAB;
+        app.bitcoin_log_path = Some(PathBuf::from("debug.log"));
+        app.bitcoin_log_filter = "mempool".to_string();
+        app.bitcoin_log_lines = vec!["2026-01-01 UpdateTip: new best block".to_string()];
+
+        let output = render_view(&app);
+
+        assert!(output.contains("Lines: 0/1"));
+        assert!(output.contains("No log entries match the current filter."));
+    }
+
+    #[test]
+    fn render_logs_draws_active_input_prompt() {
+        let mut app = App::new();
+        app.bitcoin_status_tab = LOGS_TAB;
+        app.bitcoin_log_path = Some(PathBuf::from("debug.log"));
+        app.bitcoin_log_input_mode = Some(BitcoinLogInputMode::DataDirPath);
+        app.bitcoin_log_input = "bitcoin-data".to_string();
+
+        let output = render_view(&app);
+
+        assert!(output.contains("Bitcoin Core data directory"));
+        assert!(output.contains("bitcoin-data"));
+    }
+
+    #[test]
+    fn render_peers_prompts_when_no_bitcoin_conf_is_selected() {
+        let mut app = App::new();
+        app.bitcoin_status_tab = PEERS_TAB;
+
+        let output = render_view(&app);
+
+        assert!(output.contains("Select a bitcoin.conf file to load Bitcoin Core peer info."));
+        assert!(!output.contains("Loading Bitcoin peer info"));
+    }
+
+    #[test]
+    fn render_peers_lists_connected_peer_addresses() {
+        let mut app = App::new();
+        app.bitcoin_status_tab = PEERS_TAB;
+        app.bitcoin_conf_path = Some(PathBuf::from("bitcoin.conf"));
+        app.bitcoin_chain_info = Some(chain_info_with_peers(&["127.0.0.1:8333", "10.0.0.2:18333"]));
+
+        let output = render_view(&app);
+
+        assert!(output.contains("Connected Peers: 2"));
+        assert!(output.contains("Peer Addresses:"));
+        assert!(output.contains("* 127.0.0.1:8333"));
+        assert!(output.contains("* 10.0.0.2:18333"));
+    }
+
+    #[test]
+    fn render_peers_shows_none_when_chain_info_has_no_peer_addresses() {
+        let mut app = App::new();
+        app.bitcoin_status_tab = PEERS_TAB;
+        app.bitcoin_conf_path = Some(PathBuf::from("bitcoin.conf"));
+        app.bitcoin_chain_info = Some(chain_info_with_peers(&[]));
+
+        let output = render_view(&app);
+
+        assert!(output.contains("Connected Peers: 0"));
+        assert!(output.contains("Peer Addresses:"));
+        assert!(output.contains("None"));
+    }
+
+    #[test]
+    fn render_peers_shows_loading_and_error_states() {
+        let mut loading_app = App::new();
+        loading_app.bitcoin_status_tab = PEERS_TAB;
+        loading_app.bitcoin_conf_path = Some(PathBuf::from("bitcoin.conf"));
+
+        let loading_output = render_view(&loading_app);
+
+        assert!(loading_output.contains("Loading Bitcoin peer info..."));
+
+        let mut error_app = App::new();
+        error_app.bitcoin_status_tab = PEERS_TAB;
+        error_app.bitcoin_conf_path = Some(PathBuf::from("bitcoin.conf"));
+        error_app.bitcoin_chain_info_error = Some("RPC offline".to_string());
+
+        let error_output = render_view(&error_app);
+
+        assert!(error_output.contains("Failed to fetch Bitcoin peer info: RPC offline"));
+        assert!(!error_output.contains("Loading Bitcoin peer info"));
+    }
+
+    #[test]
+    fn optional_formatters_handle_all_display_cases() {
+        assert_eq!(BitcoinStatusView::format_verification_progress(None), "-");
+        assert_eq!(
+            BitcoinStatusView::format_verification_progress(Some(0.9999)),
+            "99.99%"
+        );
+        assert_eq!(BitcoinStatusView::format_optional_bool(Some(true)), "yes");
+        assert_eq!(BitcoinStatusView::format_optional_bool(Some(false)), "no");
+        assert_eq!(BitcoinStatusView::format_optional_bool(None), "-");
+        assert_eq!(BitcoinStatusView::format_optional_u64(Some(42)), "42");
+        assert_eq!(BitcoinStatusView::format_optional_u64(None), "-");
     }
 
     #[test]
