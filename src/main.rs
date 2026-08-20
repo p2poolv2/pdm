@@ -81,6 +81,7 @@ where
     <B as Backend>::Error: Send + Sync + 'static,
 {
     loop {
+        app.poll_bitcoin_chain_info();
         app.poll_chain_info();
         app.poll_share_info();
         app.poll_peer_info();
