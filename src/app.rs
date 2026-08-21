@@ -23,6 +23,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
 const BITCOIN_LOG_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
+const OSC52_CLIPBOARD_MAX_BYTES: usize = 32 * 1024;
 
 /// Sidebar items labels
 pub const SIDEBAR_ITEMS: &[(&str, CurrentScreen)] = &[
@@ -428,6 +429,11 @@ impl App {
             self.bitcoin_log_status = "No Bitcoin Core log lines to copy.".to_string();
             return;
         }
+        if text.as_bytes().len() > OSC52_CLIPBOARD_MAX_BYTES {
+            self.bitcoin_log_status =
+                "Selection is too large to copy. Narrow the filter.".to_string();
+            return;
+        }
 
         match copy_to_terminal_clipboard(&text) {
             Ok(()) => {
@@ -604,6 +610,13 @@ impl App {
 }
 
 fn copy_to_terminal_clipboard(text: &str) -> Result<()> {
+    if text.as_bytes().len() > OSC52_CLIPBOARD_MAX_BYTES {
+        anyhow::bail!(
+            "clipboard payload exceeds {} bytes",
+            OSC52_CLIPBOARD_MAX_BYTES
+        );
+    }
+
     let encoded = general_purpose::STANDARD.encode(text.as_bytes());
     let sequence = format!("\x1b]52;c;{encoded}\x07");
     let mut stdout = std::io::stdout();
@@ -1045,6 +1058,29 @@ mod tests {
         app.copy_filtered_bitcoin_logs();
 
         assert_eq!(app.bitcoin_log_status, "No Bitcoin Core log lines to copy.");
+    }
+
+    #[test]
+    fn copy_filtered_bitcoin_logs_successful_copy_sets_status() {
+        let mut app = App::new();
+        app.bitcoin_log_lines = vec!["first".to_string(), "second".to_string()];
+
+        app.copy_filtered_bitcoin_logs();
+
+        assert_eq!(app.bitcoin_log_status, "Copied 2 log lines.");
+    }
+
+    #[test]
+    fn copy_filtered_bitcoin_logs_rejects_oversized_selection() {
+        let mut app = App::new();
+        app.bitcoin_log_lines = vec!["x".repeat(OSC52_CLIPBOARD_MAX_BYTES + 1)];
+
+        app.copy_filtered_bitcoin_logs();
+
+        assert_eq!(
+            app.bitcoin_log_status,
+            "Selection is too large to copy. Narrow the filter."
+        );
     }
 
     // peer info polling

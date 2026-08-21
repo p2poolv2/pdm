@@ -7,7 +7,10 @@ use anyhow::{Context, Result, anyhow, bail};
 use reqwest::Client;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
-use std::{path::PathBuf, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 const REQUEST_TIMEOUT_SECONDS: u64 = 10;
 
@@ -290,7 +293,49 @@ fn data_dir(entries: &[ConfigEntry], network: BitcoinNetwork) -> PathBuf {
 }
 
 fn default_data_dir() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".bitcoin"))
+    let home = std::env::var_os("HOME");
+
+    #[cfg(target_os = "windows")]
+    {
+        return std::env::var_os("APPDATA")
+            .map(PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("USERPROFILE")
+                    .map(|profile| PathBuf::from(profile).join("AppData").join("Roaming"))
+            })
+            .map(|dir| dir.join("Bitcoin"))
+            .or_else(|| home.map(|home| default_data_dir_for_home(Path::new(&home))));
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        return home.map(|home| default_data_dir_for_home(Path::new(&home)));
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        return home.map(|home| default_data_dir_for_home(Path::new(&home)));
+    }
+}
+
+fn default_data_dir_for_home(home: &std::path::Path) -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        let appdata = std::env::var_os("APPDATA")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join("AppData").join("Roaming"));
+        return appdata.join("Bitcoin");
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        return home.join("Library/Application Support/Bitcoin");
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        return home.join(".bitcoin");
+    }
 }
 
 fn display_network(chain: &str) -> &str {
@@ -317,6 +362,31 @@ mod tests {
             enabled: true,
             section: None,
         }
+    }
+
+    #[test]
+    fn default_data_dir_for_home_uses_platform_defaults() {
+        let expected = if cfg!(target_os = "windows") {
+            PathBuf::from("C:/Users/alice/AppData/Roaming/Bitcoin")
+        } else if cfg!(target_os = "macos") {
+            PathBuf::from("/Users/alice/Library/Application Support/Bitcoin")
+        } else {
+            PathBuf::from("/Users/alice/.bitcoin")
+        };
+
+        let actual = default_data_dir_for_home(Path::new("/Users/alice"));
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn cookie_path_uses_absolute_data_dir() {
+        let entries = vec![entry("datadir", "/tmp/bitcoin")];
+
+        assert_eq!(
+            cookie_path(&entries, BitcoinNetwork::Mainnet),
+            PathBuf::from("/tmp/bitcoin/.cookie")
+        );
     }
 
     #[test]

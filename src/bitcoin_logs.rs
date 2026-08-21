@@ -10,6 +10,7 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 pub const DEFAULT_MAX_LOG_LINES: usize = 300;
+pub const MAX_LOG_READ_BYTES: u64 = 512 * 1024;
 
 const READ_CHUNK_SIZE: u64 = 8 * 1024;
 
@@ -58,15 +59,27 @@ pub fn read_recent_log_lines(path: &Path, max_lines: usize) -> Result<Vec<String
         return Ok(Vec::new());
     }
 
+    let window_start = file_len.saturating_sub(MAX_LOG_READ_BYTES);
     let mut position = file_len;
     let mut newline_count = 0usize;
     let mut chunks: Vec<Vec<u8>> = Vec::new();
+    let mut partial_prefix = false;
 
-    while position > 0 && newline_count <= max_lines {
-        let read_size = READ_CHUNK_SIZE.min(position);
-        position -= read_size;
+    if file_len > MAX_LOG_READ_BYTES {
+        let mut prev_byte = [0u8; 1];
+        file.seek(SeekFrom::Start(window_start.saturating_sub(1)))
+            .with_context(|| format!("could not seek {}", path.display()))?;
+        file.read_exact(&mut prev_byte)
+            .with_context(|| format!("could not read {}", path.display()))?;
+        partial_prefix = prev_byte[0] != b'\n';
+    }
 
-        file.seek(SeekFrom::Start(position))
+    while position > window_start && newline_count < max_lines {
+        let remaining_bytes = position.saturating_sub(window_start);
+        let read_size = READ_CHUNK_SIZE.min(remaining_bytes);
+        let chunk_start = position - read_size;
+
+        file.seek(SeekFrom::Start(chunk_start))
             .with_context(|| format!("could not seek {}", path.display()))?;
 
         let mut chunk = vec![0u8; read_size as usize];
@@ -75,6 +88,7 @@ pub fn read_recent_log_lines(path: &Path, max_lines: usize) -> Result<Vec<String
 
         newline_count += chunk.iter().filter(|byte| **byte == b'\n').count();
         chunks.push(chunk);
+        position = chunk_start;
     }
 
     let total_len = chunks.iter().map(Vec::len).sum();
@@ -83,8 +97,14 @@ pub fn read_recent_log_lines(path: &Path, max_lines: usize) -> Result<Vec<String
         bytes.extend(chunk);
     }
 
-    let text = String::from_utf8_lossy(&bytes);
-    let mut lines: Vec<String> = text.lines().map(ToOwned::to_owned).collect();
+    let mut lines: Vec<String> = String::from_utf8_lossy(&bytes)
+        .lines()
+        .map(ToOwned::to_owned)
+        .collect();
+
+    if partial_prefix && !lines.is_empty() {
+        lines.remove(0);
+    }
 
     if lines.len() > max_lines {
         lines = lines.split_off(lines.len() - max_lines);
@@ -308,6 +328,55 @@ mod tests {
                 "2026-01-01T00:00:01Z second".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn reads_all_available_lines_when_fewer_than_requested() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("debug.log");
+        std::fs::write(&path, "one\ntwo\nthree\n").unwrap();
+
+        let lines = read_recent_log_lines(&path, 5).unwrap();
+
+        assert_eq!(
+            lines,
+            vec!["three".to_string(), "two".to_string(), "one".to_string(),]
+        );
+    }
+
+    #[test]
+    fn reads_exact_boundary_line_counts() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("debug.log");
+        std::fs::write(&path, "a\nb\nc\nd\n").unwrap();
+
+        let lines = read_recent_log_lines(&path, 2).unwrap();
+
+        assert_eq!(lines, vec!["d".to_string(), "c".to_string()]);
+    }
+
+    #[test]
+    fn reads_tail_from_end_for_large_file() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("debug.log");
+        let long_prefix = "x".repeat(MAX_LOG_READ_BYTES as usize + 1024);
+        std::fs::write(&path, format!("{long_prefix}\nalpha\nbeta\ngamma\n")).unwrap();
+
+        let lines = read_recent_log_lines(&path, 3).unwrap();
+
+        assert_eq!(
+            lines,
+            vec!["gamma".to_string(), "beta".to_string(), "alpha".to_string()]
+        );
+    }
+
+    #[test]
+    fn returns_empty_for_empty_file() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("debug.log");
+        std::fs::write(&path, "").unwrap();
+
+        assert!(read_recent_log_lines(&path, 5).unwrap().is_empty());
     }
 
     #[test]
