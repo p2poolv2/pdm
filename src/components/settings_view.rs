@@ -10,7 +10,7 @@ use ratatui::{
 };
 
 /// Number of settings fields.
-pub const FIELD_COUNT: usize = 5;
+pub const FIELD_COUNT: usize = 4;
 
 /// Describes how a settings field behaves when Enter is pressed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,7 +23,6 @@ pub enum FieldKind {
 
 /// All settings fields in display order.  Each entry is `(label, kind)`.
 pub const FIELDS: [(&str, FieldKind); FIELD_COUNT] = [
-    ("Bitcoin config path", FieldKind::FilePicker),
     ("P2Pool config path", FieldKind::FilePicker),
     ("LN config path", FieldKind::FilePicker),
     ("Shares Market config path", FieldKind::FilePicker),
@@ -81,10 +80,6 @@ impl SettingsView {
     pub fn render(f: &mut Frame, app: &mut App, area: Rect) {
         let values: [Option<String>; FIELD_COUNT] = [
             app.settings
-                .bitcoin_conf_path
-                .as_ref()
-                .map(|p| p.to_string_lossy().into_owned()),
-            app.settings
                 .p2pool_conf_path
                 .as_ref()
                 .map(|p| p.to_string_lossy().into_owned()),
@@ -114,7 +109,7 @@ impl SettingsView {
                             .add_modifier(Modifier::BOLD),
                     ),
                     None => {
-                        if idx == 4 {
+                        if idx == 3 {
                             let path = if app.config_dir.as_os_str().is_empty() {
                                 "(unknown)".to_string()
                             } else {
@@ -268,7 +263,6 @@ mod tests {
         use ratatui::backend::TestBackend;
 
         let mut app = App::new();
-        app.settings.bitcoin_conf_path = Some(std::path::PathBuf::from("/tmp/bitcoin.conf"));
         app.settings.p2pool_conf_path = Some(std::path::PathBuf::from("/tmp/p2pool.toml"));
         app.settings.ln_conf_path = Some(std::path::PathBuf::from("/tmp/ln.conf"));
         app.settings.shares_market_conf_path = Some(std::path::PathBuf::from("/tmp/shares.conf"));

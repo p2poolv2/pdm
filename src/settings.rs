@@ -18,8 +18,6 @@ use std::path::PathBuf;
 ///
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Settings {
-    /// Path to the Bitcoin Core config file (bitcoin.conf)
-    pub bitcoin_conf_path: Option<PathBuf>,
     /// Path to the p2poolv2 config file
     pub p2pool_conf_path: Option<PathBuf>,
     /// Path to the Lightning Network config file
@@ -118,7 +116,6 @@ mod tests {
     #[test]
     fn default_settings_has_no_paths() {
         let s = Settings::default();
-        assert!(s.bitcoin_conf_path.is_none());
         assert!(s.p2pool_conf_path.is_none());
         assert!(s.ln_conf_path.is_none());
         assert!(s.shares_market_conf_path.is_none());
@@ -131,7 +128,6 @@ mod tests {
         // Write the settings file directly into the temp dir
         let path = dir.path().join("settings.toml");
         let settings = Settings {
-            bitcoin_conf_path: Some(PathBuf::from("/tmp/bitcoin.conf")),
             p2pool_conf_path: Some(PathBuf::from("/tmp/p2pool.toml")),
             ..Default::default()
         };
@@ -140,7 +136,6 @@ mod tests {
 
         let loaded: Settings = toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
 
-        assert_eq!(loaded.bitcoin_conf_path, settings.bitcoin_conf_path);
         assert_eq!(loaded.p2pool_conf_path, settings.p2pool_conf_path);
         assert!(loaded.ln_conf_path.is_none());
     }
@@ -157,16 +152,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         set_config_dir(&dir);
         let settings = Settings {
-            bitcoin_conf_path: Some(PathBuf::from("/tmp/bitcoin.conf")),
             ln_conf_path: Some(PathBuf::from("/tmp/ln.conf")),
             ..Default::default()
         };
         save_settings(&settings).unwrap();
         let loaded = load_settings();
-        assert_eq!(
-            loaded.bitcoin_conf_path,
-            Some(PathBuf::from("/tmp/bitcoin.conf"))
-        );
         assert_eq!(loaded.ln_conf_path, Some(PathBuf::from("/tmp/ln.conf")));
         assert!(loaded.p2pool_conf_path.is_none());
     }
@@ -213,7 +203,6 @@ mod tests {
         set_config_dir(&dir);
         // No settings.toml written
         let settings = load_settings();
-        assert!(settings.bitcoin_conf_path.is_none());
     }
 
     #[test]
@@ -223,7 +212,6 @@ mod tests {
         set_config_dir(&dir);
         std::fs::write(dir.path().join("settings.toml"), "not valid toml :::").unwrap();
         let settings = load_settings();
-        assert!(settings.bitcoin_conf_path.is_none());
     }
 
     #[test]
@@ -231,16 +219,6 @@ mod tests {
     fn load_settings_reads_valid_file() {
         let dir = tempfile::tempdir().unwrap();
         set_config_dir(&dir);
-        std::fs::write(
-            dir.path().join("settings.toml"),
-            r#"bitcoin_conf_path = "/tmp/bitcoin.conf""#,
-        )
-        .unwrap();
-        let settings = load_settings();
-        assert_eq!(
-            settings.bitcoin_conf_path,
-            Some(PathBuf::from("/tmp/bitcoin.conf"))
-        );
     }
 
     #[test]
@@ -264,13 +242,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         set_config_dir(&dir);
         let settings = Settings {
-            bitcoin_conf_path: Some(PathBuf::from("/tmp/bitcoin.conf")),
             ln_conf_path: Some(PathBuf::from("/tmp/ln.conf")),
             ..Default::default()
         };
         save_settings(&settings).unwrap();
         let loaded = load_settings();
-        assert_eq!(loaded.bitcoin_conf_path, settings.bitcoin_conf_path);
         assert_eq!(loaded.ln_conf_path, settings.ln_conf_path);
         assert!(loaded.p2pool_conf_path.is_none());
     }
@@ -283,7 +259,6 @@ mod tests {
         set_config_dir(&default_dir);
 
         let settings = Settings {
-            bitcoin_conf_path: Some(PathBuf::from("/tmp/bitcoin.conf")),
             settings_dir_override: Some(override_dir.path().to_path_buf()),
             ..Default::default()
         };
@@ -297,8 +272,6 @@ mod tests {
 
         let override_content = std::fs::read_to_string(&override_path).unwrap();
         let default_content = std::fs::read_to_string(&default_path).unwrap();
-        assert!(override_content.contains("/tmp/bitcoin.conf"));
-        assert!(default_content.contains("/tmp/bitcoin.conf"));
     }
 
     #[test]
@@ -321,7 +294,6 @@ mod tests {
 
         // Write the authoritative settings in the override dir.
         let authoritative = Settings {
-            bitcoin_conf_path: Some(PathBuf::from("/override/bitcoin.conf")),
             settings_dir_override: Some(override_dir.path().to_path_buf()),
             ..Default::default()
         };
@@ -332,10 +304,6 @@ mod tests {
         .unwrap();
 
         let loaded = load_settings();
-        assert_eq!(
-            loaded.bitcoin_conf_path,
-            Some(PathBuf::from("/override/bitcoin.conf"))
-        );
     }
 
     #[test]
@@ -346,7 +314,6 @@ mod tests {
 
         // Pointer points to a directory that doesn't exist.
         let pointer = Settings {
-            bitcoin_conf_path: Some(PathBuf::from("/default/bitcoin.conf")),
             settings_dir_override: Some(PathBuf::from("/nonexistent/dir")),
             ..Default::default()
         };
@@ -358,9 +325,5 @@ mod tests {
 
         let loaded = load_settings();
         // Override unreadable → falls back to the default-location settings.
-        assert_eq!(
-            loaded.bitcoin_conf_path,
-            Some(PathBuf::from("/default/bitcoin.conf"))
-        );
     }
 }

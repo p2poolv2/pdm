@@ -8,7 +8,6 @@ TestBackend {
         content: [
             "┌ PDM ──────────────────┐┌ Info ───────────────────────────────────────────────┐",
             "│Home                   ││ Chain Info │ System │ Logs │ Peers                  │",
-            "│Bitcoin Config         ││                                                     │",
             "│Bitcoin Status         │└─────────────────────────────────────────────────────┘",
             "│P2Pool Config          │┌─────────────────────────────────────────────────────┐",
             "│P2Pool Status          ││Chain Info                                           │",
