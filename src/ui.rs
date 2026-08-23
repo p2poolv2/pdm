@@ -105,28 +105,6 @@ mod tests {
     }
 
     #[test]
-    fn test_bitcoin_status_tab_system_render() {
-        let mut terminal = make_terminal();
-        let mut app = App::new();
-        app.sidebar_index = 1;
-        app.toggle_menu();
-        app.bitcoin_status_tab = 1;
-        terminal.draw(|f| ui(f, &mut app)).unwrap();
-        insta::assert_debug_snapshot!(terminal.backend());
-    }
-
-    #[test]
-    fn test_bitcoin_status_tab_logs_render() {
-        let mut terminal = make_terminal();
-        let mut app = App::new();
-        app.sidebar_index = 1;
-        app.toggle_menu();
-        app.bitcoin_status_tab = 2;
-        terminal.draw(|f| ui(f, &mut app)).unwrap();
-        insta::assert_debug_snapshot!(terminal.backend());
-    }
-
-    #[test]
     fn test_bitcoin_status_tab_peers_render() {
         let mut terminal = make_terminal();
         let mut app = App::new();

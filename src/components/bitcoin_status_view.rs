@@ -280,7 +280,7 @@ mod tests {
         assert!(output.contains("Connection Count       : -"));
     }
 
-    /// Renders the Peers tab (index 3) and returns the buffer content as a string.
+    /// Renders the Peers tab (index 1) and returns the buffer content as a string.
     fn render_peers_view(app: &App) -> String {
         let backend = TestBackend::new(80, 25);
         let mut terminal = Terminal::new(backend).unwrap();

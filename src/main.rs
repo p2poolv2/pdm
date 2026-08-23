@@ -109,9 +109,9 @@ fn dispatch_key(key: event::KeyEvent, app: &mut App) -> KeyOutcome {
 
     // Ctrl-C is always a hard exit.
     // 'q' is suppressed while a text-input field is active.
-    let text_input_active = (app.current_screen == CurrentScreen::P2PoolConfig
+    let text_input_active = app.current_screen == CurrentScreen::P2PoolConfig
         && !app.p2pool_config_view.sidebar_focused
-        && app.p2pool_config_view.editing);
+        && app.p2pool_config_view.editing;
 
     if (key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('c'))
         || (!text_input_active && key.code == KeyCode::Char('q'))
@@ -908,7 +908,7 @@ port = 46884
 
     #[test]
     #[serial]
-    fn file_selected_for_settings_field_1_invalid_hostname_sets_error() {
+    fn file_selected_for_settings_field_0_invalid_hostname_sets_error() {
         use tempfile::tempdir;
 
         let dir = tempdir().unwrap();
@@ -931,7 +931,7 @@ port = 46884
 
     #[test]
     #[serial]
-    fn file_selected_for_settings_field_1_load_failure_sets_error() {
+    fn file_selected_for_settings_field_0_load_failure_sets_error() {
         use tempfile::tempdir;
 
         let dir = tempdir().unwrap();
@@ -989,7 +989,7 @@ port = 46884
     #[test]
     fn open_explorer_for_settings_sets_state() {
         let mut app = App::new();
-        app.sidebar_index = 8;
+        app.sidebar_index = 7;
         app.toggle_menu();
 
         let flow = handle_action(AppAction::OpenExplorerForSettings(1), &mut app).unwrap();
