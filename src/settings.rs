@@ -203,6 +203,10 @@ mod tests {
         set_config_dir(&dir);
         // No settings.toml written
         let settings = load_settings();
+        assert!(settings.p2pool_conf_path.is_none());
+        assert!(settings.ln_conf_path.is_none());
+        assert!(settings.shares_market_conf_path.is_none());
+        assert!(settings.settings_dir_override.is_none());
     }
 
     #[test]
@@ -212,6 +216,10 @@ mod tests {
         set_config_dir(&dir);
         std::fs::write(dir.path().join("settings.toml"), "not valid toml :::").unwrap();
         let settings = load_settings();
+        assert!(settings.p2pool_conf_path.is_none());
+        assert!(settings.ln_conf_path.is_none());
+        assert!(settings.shares_market_conf_path.is_none());
+        assert!(settings.settings_dir_override.is_none());
     }
 
     #[test]
@@ -219,6 +227,16 @@ mod tests {
     fn load_settings_reads_valid_file() {
         let dir = tempfile::tempdir().unwrap();
         set_config_dir(&dir);
+        std::fs::write(
+            dir.path().join("settings.toml"),
+            r#"p2pool_conf_path = "/tmp/p2pool.toml""#,
+        )
+        .unwrap();
+        let settings = load_settings();
+        assert_eq!(
+            settings.p2pool_conf_path,
+            Some(PathBuf::from("/tmp/p2pool.toml"))
+        );
     }
 
     #[test]
@@ -272,6 +290,11 @@ mod tests {
 
         let override_content = std::fs::read_to_string(&override_path).unwrap();
         let default_content = std::fs::read_to_string(&default_path).unwrap();
+        assert_eq!(
+            override_content, default_content,
+            "override and default copies must match"
+        );
+        assert!(override_content.contains("settings_dir_override"));
     }
 
     #[test]
@@ -283,6 +306,7 @@ mod tests {
 
         // Write a pointer in the default dir.
         let pointer = Settings {
+            p2pool_conf_path: Some(PathBuf::from("/default/p2pool.toml")),
             settings_dir_override: Some(override_dir.path().to_path_buf()),
             ..Default::default()
         };
@@ -294,6 +318,7 @@ mod tests {
 
         // Write the authoritative settings in the override dir.
         let authoritative = Settings {
+            p2pool_conf_path: Some(PathBuf::from("/override/p2pool.toml")),
             settings_dir_override: Some(override_dir.path().to_path_buf()),
             ..Default::default()
         };
@@ -304,6 +329,11 @@ mod tests {
         .unwrap();
 
         let loaded = load_settings();
+        assert_eq!(
+            loaded.p2pool_conf_path,
+            Some(PathBuf::from("/override/p2pool.toml")),
+            "must read from the override dir, not the default-location pointer"
+        );
     }
 
     #[test]
@@ -314,6 +344,7 @@ mod tests {
 
         // Pointer points to a directory that doesn't exist.
         let pointer = Settings {
+            p2pool_conf_path: Some(PathBuf::from("/default/p2pool.toml")),
             settings_dir_override: Some(PathBuf::from("/nonexistent/dir")),
             ..Default::default()
         };
@@ -325,5 +356,9 @@ mod tests {
 
         let loaded = load_settings();
         // Override unreadable → falls back to the default-location settings.
+        assert_eq!(
+            loaded.p2pool_conf_path,
+            Some(PathBuf::from("/default/p2pool.toml"))
+        );
     }
 }
