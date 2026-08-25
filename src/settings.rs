@@ -20,10 +20,6 @@ use std::path::PathBuf;
 pub struct Settings {
     /// Path to the p2poolv2 config file
     pub p2pool_conf_path: Option<PathBuf>,
-    /// Path to the Lightning Network config file
-    pub ln_conf_path: Option<PathBuf>,
-    /// Path to the Shares Market config file
-    pub shares_market_conf_path: Option<PathBuf>,
     /// If set, the user-chosen directory where `settings.toml` is stored.
     /// the default location always holds a copy so the override is found
     /// on the next launch.
@@ -117,8 +113,6 @@ mod tests {
     fn default_settings_has_no_paths() {
         let s = Settings::default();
         assert!(s.p2pool_conf_path.is_none());
-        assert!(s.ln_conf_path.is_none());
-        assert!(s.shares_market_conf_path.is_none());
         assert!(s.settings_dir_override.is_none());
     }
 
@@ -137,7 +131,6 @@ mod tests {
         let loaded: Settings = toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
 
         assert_eq!(loaded.p2pool_conf_path, settings.p2pool_conf_path);
-        assert!(loaded.ln_conf_path.is_none());
     }
 
     #[test]
@@ -152,13 +145,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         set_config_dir(&dir);
         let settings = Settings {
-            ln_conf_path: Some(PathBuf::from("/tmp/ln.conf")),
+            p2pool_conf_path: Some(PathBuf::from("/tmp/p2pool.toml")),
             ..Default::default()
         };
         save_settings(&settings).unwrap();
         let loaded = load_settings();
-        assert_eq!(loaded.ln_conf_path, Some(PathBuf::from("/tmp/ln.conf")));
-        assert!(loaded.p2pool_conf_path.is_none());
+        assert_eq!(
+            loaded.p2pool_conf_path,
+            Some(PathBuf::from("/tmp/p2pool.toml"))
+        );
+        assert!(loaded.settings_dir_override.is_none());
     }
 
     #[test]
@@ -167,15 +163,15 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         set_config_dir(&dir);
         let settings = Settings {
-            shares_market_conf_path: Some(PathBuf::from("/tmp/shares.conf")),
+            p2pool_conf_path: Some(PathBuf::from("/tmp/p2pool.toml")),
             ..Default::default()
         };
         save_settings(&settings).unwrap();
         let path = dir.path().join("settings.toml");
         assert!(path.exists());
         let content = std::fs::read_to_string(&path).unwrap();
-        assert!(content.contains("shares_market_conf_path"));
-        assert!(content.contains("/tmp/shares.conf"));
+        assert!(content.contains("p2pool_conf_path"));
+        assert!(content.contains("/tmp/p2pool.toml"));
     }
 
     #[test]
@@ -204,8 +200,6 @@ mod tests {
         // No settings.toml written
         let settings = load_settings();
         assert!(settings.p2pool_conf_path.is_none());
-        assert!(settings.ln_conf_path.is_none());
-        assert!(settings.shares_market_conf_path.is_none());
         assert!(settings.settings_dir_override.is_none());
     }
 
@@ -217,8 +211,6 @@ mod tests {
         std::fs::write(dir.path().join("settings.toml"), "not valid toml :::").unwrap();
         let settings = load_settings();
         assert!(settings.p2pool_conf_path.is_none());
-        assert!(settings.ln_conf_path.is_none());
-        assert!(settings.shares_market_conf_path.is_none());
         assert!(settings.settings_dir_override.is_none());
     }
 
@@ -260,13 +252,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         set_config_dir(&dir);
         let settings = Settings {
-            ln_conf_path: Some(PathBuf::from("/tmp/ln.conf")),
+            p2pool_conf_path: Some(PathBuf::from("/tmp/p2pool.toml")),
             ..Default::default()
         };
         save_settings(&settings).unwrap();
         let loaded = load_settings();
-        assert_eq!(loaded.ln_conf_path, settings.ln_conf_path);
-        assert!(loaded.p2pool_conf_path.is_none());
+        assert_eq!(loaded.p2pool_conf_path, settings.p2pool_conf_path);
+        assert!(loaded.settings_dir_override.is_none());
     }
 
     #[test]

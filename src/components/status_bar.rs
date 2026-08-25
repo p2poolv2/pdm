@@ -55,9 +55,7 @@ impl StatusBar {
                     let idx = app.settings_view.selected_index;
                     let field_is_set = match idx {
                         0 => s.p2pool_conf_path.is_some(),
-                        1 => s.ln_conf_path.is_some(),
-                        2 => s.shares_market_conf_path.is_some(),
-                        3 => s.settings_dir_override.is_some(),
+                        1 => s.settings_dir_override.is_some(),
                         _ => false,
                     };
                     spans.extend(hint("↑↓", "Navigate"));
@@ -175,8 +173,8 @@ mod tests {
         let mut app = App::new();
         app.current_screen = CurrentScreen::Settings;
         app.settings_view.sidebar_focused = false;
-        // field 3 is DirectoryPicker
-        app.settings_view.selected_index = 3;
+        // field 1 is DirectoryPicker
+        app.settings_view.selected_index = 1;
         let output = render_status_bar(&app);
         assert!(output.contains("Browse dir"));
         assert!(output.contains("Back"));
@@ -224,43 +222,11 @@ mod tests {
     }
 
     #[test]
-    fn settings_content_ln_field_set_shows_clear() {
-        let mut app = App::new();
-        app.current_screen = CurrentScreen::Settings;
-        app.settings_view.sidebar_focused = false;
-        app.settings_view.selected_index = 1;
-        app.settings.ln_conf_path = Some(std::path::PathBuf::from("/tmp/ln.conf"));
-        let output = render_status_bar(&app);
-        assert!(output.contains("Clear"));
-    }
-
-    #[test]
-    fn settings_content_shares_field_set_shows_clear() {
-        let mut app = App::new();
-        app.current_screen = CurrentScreen::Settings;
-        app.settings_view.sidebar_focused = false;
-        app.settings_view.selected_index = 2;
-        app.settings.shares_market_conf_path = Some(std::path::PathBuf::from("/tmp/shares.conf"));
-        let output = render_status_bar(&app);
-        assert!(output.contains("Clear"));
-    }
-
-    #[test]
-    fn settings_content_out_of_range_field_no_clear() {
-        let mut app = App::new();
-        app.current_screen = CurrentScreen::Settings;
-        app.settings_view.sidebar_focused = false;
-        app.settings_view.selected_index = 99;
-        let output = render_status_bar(&app);
-        assert!(!output.contains("Clear"));
-    }
-
-    #[test]
     fn settings_content_directory_override_field_set_shows_clear() {
         let mut app = App::new();
         app.current_screen = CurrentScreen::Settings;
         app.settings_view.sidebar_focused = false;
-        app.settings_view.selected_index = 3;
+        app.settings_view.selected_index = 1;
         app.settings.settings_dir_override = Some(std::path::PathBuf::from("/custom/dir"));
         let output = render_status_bar(&app);
         assert!(output.contains("Clear"));

@@ -10,7 +10,7 @@ use ratatui::{
 };
 
 /// Number of settings fields.
-pub const FIELD_COUNT: usize = 4;
+pub const FIELD_COUNT: usize = 2;
 
 /// Describes how a settings field behaves when Enter is pressed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,8 +24,6 @@ pub enum FieldKind {
 /// All settings fields in display order.  Each entry is `(label, kind)`.
 pub const FIELDS: [(&str, FieldKind); FIELD_COUNT] = [
     ("P2Pool config path", FieldKind::FilePicker),
-    ("LN config path", FieldKind::FilePicker),
-    ("Shares Market config path", FieldKind::FilePicker),
     ("Settings directory", FieldKind::DirectoryPicker),
 ];
 
@@ -84,14 +82,6 @@ impl SettingsView {
                 .as_ref()
                 .map(|p| p.to_string_lossy().into_owned()),
             app.settings
-                .ln_conf_path
-                .as_ref()
-                .map(|p| p.to_string_lossy().into_owned()),
-            app.settings
-                .shares_market_conf_path
-                .as_ref()
-                .map(|p| p.to_string_lossy().into_owned()),
-            app.settings
                 .settings_dir_override
                 .as_ref()
                 .map(|p| p.to_string_lossy().into_owned()),
@@ -109,7 +99,7 @@ impl SettingsView {
                             .add_modifier(Modifier::BOLD),
                     ),
                     None => {
-                        if idx == 3 {
+                        if idx == 1 {
                             let path = if app.config_dir.as_os_str().is_empty() {
                                 "(unknown)".to_string()
                             } else {
@@ -202,9 +192,9 @@ mod tests {
     #[test]
     fn browsing_up_decrements_index() {
         let mut view = content_focused_view();
-        view.selected_index = 2;
+        view.selected_index = 1;
         view.handle_input(key(KeyCode::Up));
-        assert_eq!(view.selected_index, 1);
+        assert_eq!(view.selected_index, 0);
     }
 
     #[test]
@@ -264,8 +254,6 @@ mod tests {
 
         let mut app = App::new();
         app.settings.p2pool_conf_path = Some(std::path::PathBuf::from("/tmp/p2pool.toml"));
-        app.settings.ln_conf_path = Some(std::path::PathBuf::from("/tmp/ln.conf"));
-        app.settings.shares_market_conf_path = Some(std::path::PathBuf::from("/tmp/shares.conf"));
         app.settings.settings_dir_override = Some(std::path::PathBuf::from("/custom/dir"));
         app.settings_view.sidebar_focused = false;
 
@@ -285,13 +273,13 @@ mod tests {
             .map(|c| c.symbol().to_string())
             .collect();
 
-        assert!(output.contains("bitcoin.conf") || output.contains("Settings"));
+        assert!(output.contains("p2pool.toml") || output.contains("Settings"));
         assert!(output.contains("custom") || output.contains("Settings directory"));
     }
 
     #[test]
     #[serial_test::serial]
-    fn render_field4_shows_default_config_dir_when_no_override() {
+    fn render_field2_shows_default_config_dir_when_no_override() {
         use crate::app::App;
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
