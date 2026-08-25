@@ -1,6 +1,5 @@
 ---
 source: src/ui.rs
-assertion_line: 180
 expression: terminal.backend()
 ---
 TestBackend {
@@ -9,14 +8,14 @@ TestBackend {
         content: [
             "┌ PDM ──────────────────┐┌ P2Pool Config ──────────────────────────────────────┐",
             "│Home                   ││Press [Enter] to select a p2poolv2 config file       │",
-            "│Bitcoin Config         ││                                                     │",
             "│Bitcoin Status         ││                                                     │",
             "│P2Pool Config          ││                                                     │",
             "│P2Pool Status          ││                                                     │",
-            "│LN Config              ││                                                     │",
-            "│LN Status              ││                                                     │",
-            "│Shares Market          ││                                                     │",
             "│Settings               ││                                                     │",
+            "│                       ││                                                     │",
+            "│                       ││                                                     │",
+            "│                       ││                                                     │",
+            "│                       ││                                                     │",
             "│                       ││                                                     │",
             "│                       ││                                                     │",
             "│                       ││                                                     │",
@@ -34,8 +33,8 @@ TestBackend {
         ],
         styles: [
             x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
-            x: 1, y: 4, fg: Black, bg: Gray, underline: Reset, modifier: NONE,
-            x: 24, y: 4, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+            x: 1, y: 3, fg: Black, bg: Gray, underline: Reset, modifier: NONE,
+            x: 24, y: 3, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
             x: 0, y: 23, fg: White, bg: DarkGray, underline: Reset, modifier: NONE,
             x: 4, y: 23, fg: DarkGray, bg: Black, underline: Reset, modifier: NONE,
             x: 23, y: 23, fg: White, bg: DarkGray, underline: Reset, modifier: NONE,
