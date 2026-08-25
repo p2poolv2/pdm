@@ -314,11 +314,11 @@ fn handle_action(action: AppAction, app: &mut App) -> Result<ControlFlow<()>> {
                                         );
                                         should_save = false;
                                     } else {
+                                        app.p2pool_conf_path = Some(path.clone());
                                         app.p2pool_config = Some(cfg);
                                         app.settings.p2pool_conf_path = Some(path.clone());
                                         app.p2pool_config_view.warning_message = None;
                                         app.p2pool_config_view.selected_index = 0;
-                                        app.settings.p2pool_conf_path = Some(path.clone());
                                     }
                                 }
                                 Err(e) => {
@@ -1077,7 +1077,8 @@ port = 46884
         app.explorer_trigger = Some(ExplorerTrigger::Settings(0));
         run(AppAction::FileSelected(path.clone()), &mut app);
 
-        assert_eq!(app.settings.p2pool_conf_path, Some(path));
+        assert_eq!(app.settings.p2pool_conf_path, Some(path.clone()));
+        assert_eq!(app.p2pool_conf_path, Some(path));
         assert_eq!(app.current_screen, CurrentScreen::Settings);
     }
 

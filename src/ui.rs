@@ -110,7 +110,7 @@ mod tests {
         let mut app = App::new();
         app.sidebar_index = 1;
         app.toggle_menu();
-        app.bitcoin_status_tab = 3;
+        app.bitcoin_status_tab = 1;
         terminal.draw(|f| ui(f, &mut app)).unwrap();
         insta::assert_debug_snapshot!(terminal.backend());
     }
