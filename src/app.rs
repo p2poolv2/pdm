@@ -132,6 +132,9 @@ impl App {
         let (peer_info_tx, peer_info_rx) = mpsc::unbounded_channel();
         let (share_info_tx, share_info_rx) = mpsc::unbounded_channel();
         let (p2pool_live_tx, p2pool_live_rx) = mpsc::unbounded_channel();
+        let p2pool_client = P2PoolClient::new();
+        let p2pool_websocket_client = p2pool_client.websocket_client();
+
         App {
             current_screen: CurrentScreen::Home,
             sidebar_index: 0,
@@ -145,8 +148,8 @@ impl App {
             bitcoin_chain_info: None,
             bitcoin_chain_info_error: None,
             settings: Settings::default(),
-            p2pool_client: P2PoolClient::new(),
-            p2pool_websocket_client: P2PoolWebSocketClient::new(),
+            p2pool_client,
+            p2pool_websocket_client,
             home_dir: std::env::var("HOME").unwrap_or_default(),
             config_dir: crate::settings::config_dir().unwrap_or_default(),
             p2pool_status_tab: 0,
@@ -179,6 +182,40 @@ impl App {
         app.p2pool_websocket_client = client.websocket_client();
         app.p2pool_client = client;
         app
+    }
+
+    pub fn set_p2pool_config(&mut self, config: P2PoolConfig) {
+        self.p2pool_config = Some(config);
+        self.refresh_p2pool_clients_from_config();
+        self.clear_p2pool_status_data();
+    }
+
+    pub fn clear_p2pool_config(&mut self) {
+        self.p2pool_config = None;
+        self.p2pool_client = P2PoolClient::new();
+        self.p2pool_websocket_client = self.p2pool_client.websocket_client();
+        self.clear_p2pool_status_data();
+    }
+
+    pub fn refresh_p2pool_clients_from_config(&mut self) {
+        if let Some(config) = self.p2pool_config.as_ref() {
+            self.p2pool_client = P2PoolClient::from_p2pool_config(config);
+            self.p2pool_websocket_client = self.p2pool_client.websocket_client();
+            self.p2pool_live_stream_started = false;
+        }
+    }
+
+    fn clear_p2pool_status_data(&mut self) {
+        self.chain_info = None;
+        self.p2pool_chain_info_error = None;
+        self.share_info = None;
+        self.p2pool_share_info_error = None;
+        self.peer_info = None;
+        self.p2pool_peer_info_error = None;
+        self.live_shares.clear();
+        self.live_peer_events.clear();
+        self.p2pool_live_error = None;
+        self.p2pool_live_stream_started = false;
     }
 
     /// Non-blocking result handler
@@ -307,6 +344,11 @@ impl App {
                 self.fetch_bitcoin_chain_info();
             }
             if self.current_screen == CurrentScreen::P2PoolStatus {
+                if self.p2pool_config.is_none() {
+                    self.clear_p2pool_status_data();
+                    return;
+                }
+
                 let chain_client = self.p2pool_client.clone();
                 let chain_tx = self.chain_info_tx.clone();
                 let share_client = self.p2pool_client.clone();
@@ -377,6 +419,9 @@ impl Default for App {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures_util::StreamExt;
+    use tokio::net::TcpListener;
+    use tokio_tungstenite::accept_async;
 
     #[test]
     fn poll_bitcoin_chain_info_updates_state_on_success() {
@@ -471,5 +516,40 @@ mod tests {
         assert!(app.bitcoin_chain_info.is_none());
         assert!(app.bitcoin_chain_info_error.is_none());
         assert!(app.bitcoin_chain_info_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn set_p2pool_config_refreshes_websocket_client_from_api_section() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let websocket = accept_async(stream).await.unwrap();
+            let (_, mut read) = websocket.split();
+
+            let _ = read.next().await.unwrap().unwrap();
+            let _ = read.next().await.unwrap().unwrap();
+        });
+
+        let mut config = P2PoolConfig::load(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/p2pool.toml"
+        ))
+        .unwrap();
+        config.api.hostname = addr.ip().to_string();
+        config.api.port = addr.port();
+
+        let mut app = App::new();
+        app.set_p2pool_config(config);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let client = app.p2pool_websocket_client.clone();
+        let subscribe_handle = tokio::spawn(async move { client.subscribe_live_events(tx).await });
+
+        let event = rx.recv().await.unwrap();
+        let result = subscribe_handle.await.unwrap();
+        server.await.unwrap();
+
+        assert!(event.is_err());
+        assert!(result.is_ok());
     }
 }
