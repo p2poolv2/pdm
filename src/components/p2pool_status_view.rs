@@ -76,6 +76,11 @@ impl P2PoolStatusView {
                 format!("Failed to fetch chain info: {err}"),
                 Style::default().fg(Color::Red),
             ))]
+        } else if app.p2pool_config.is_none() {
+            vec![Line::from(Span::styled(
+                "Select a P2Poolv2 config file to load P2Pool chain info.",
+                Style::default().fg(Color::DarkGray),
+            ))]
         } else {
             vec![Line::from(Span::styled(
                 "Loading chain info...",
@@ -157,6 +162,11 @@ impl P2PoolStatusView {
             vec![Line::from(Span::styled(
                 format!("Failed to fetch peer info: {err}"),
                 Style::default().fg(Color::Red),
+            ))]
+        } else if app.p2pool_config.is_none() {
+            vec![Line::from(Span::styled(
+                "Select a P2Poolv2 config file to load P2Pool peer info.",
+                Style::default().fg(Color::DarkGray),
             ))]
         } else {
             vec![Line::from(Span::styled(
@@ -310,6 +320,10 @@ impl P2PoolStatusView {
 
         if let Some(err) = &app.p2pool_live_error {
             return format!("Live shares unavailable: {}", Self::short_value(err, 64));
+        }
+
+        if app.p2pool_config.is_none() {
+            return "Select a P2Poolv2 config file to load P2Pool shares.".to_string();
         }
 
         "Waiting for share data...".to_string()
@@ -519,7 +533,7 @@ mod tests {
 
         let output = render_view(&app);
 
-        assert!(output.contains("Loading chain info..."));
+        assert!(output.contains("Select a P2Poolv2 config file"));
     }
 
     #[test]
@@ -598,7 +612,7 @@ mod tests {
 
         let output = render_view(&app);
 
-        assert!(output.contains("Loading peer info..."));
+        assert!(output.contains("Select a P2Poolv2 config file"));
     }
 
     #[test]
@@ -666,6 +680,13 @@ mod tests {
     #[test]
     fn render_peer_info_shows_loading_state_with_no_data() {
         let mut app = App::new();
+        app.set_p2pool_config(
+            p2poolv2_config::Config::load(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/p2pool.toml"
+            ))
+            .unwrap(),
+        );
         app.p2pool_status_tab = PEER_TAB;
 
         let output = render_view(&app);

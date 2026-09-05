@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 use crate::components::p2pool_websocket::P2PoolWebSocketClient;
-use crate::config::{ApiConfig, load_api_config};
+use p2poolv2_config::{ApiConfig as P2PoolApiConfig, Config as P2PoolConfig};
 use reqwest::Client;
 use serde::Deserialize;
 use serde::Deserializer;
@@ -16,7 +16,6 @@ const REQUEST_TIMEOUT_SECONDS: u64 = 10;
 pub struct P2PoolClient {
     client: Client,
     base_url: String,
-    fallback_base_url: Option<String>,
     auth_credentials: Option<(String, String)>,
 }
 
@@ -73,19 +72,18 @@ fn build_client() -> Client {
 
 impl P2PoolClient {
     pub fn new() -> Self {
-        Self::from_config(load_api_config().unwrap_or_default())
+        Self::with_base_url("")
     }
 
-    fn from_config(config: ApiConfig) -> Self {
-        let client = P2PoolClient::with_base_url(&config.base_url);
+    pub fn from_p2pool_config(config: &P2PoolConfig) -> Self {
+        Self::from_api_config(&config.api)
+    }
 
-        let client = if let Some(fallback) = &config.fallback_base_url {
-            client.with_fallback_base_url(fallback)
-        } else {
-            client
-        };
+    fn from_api_config(config: &P2PoolApiConfig) -> Self {
+        let client =
+            P2PoolClient::with_base_url(format!("http://{}:{}", config.hostname, config.port));
 
-        if let Some((user, pass)) = config.auth_user.zip(config.auth_pass) {
+        if let Some((user, pass)) = api_auth_credentials(config) {
             client.with_auth(user, pass)
         } else {
             client
@@ -96,7 +94,6 @@ impl P2PoolClient {
         Self {
             client: build_client(),
             base_url: base_url.into(),
-            fallback_base_url: None,
             auth_credentials: None,
         }
     }
@@ -105,7 +102,6 @@ impl P2PoolClient {
         Self {
             client,
             base_url: base_url.into(),
-            fallback_base_url: None,
             auth_credentials: None,
         }
     }
@@ -115,59 +111,33 @@ impl P2PoolClient {
         self
     }
 
-    pub fn with_fallback_base_url(mut self, fallback_base_url: impl Into<String>) -> Self {
-        self.fallback_base_url = Some(fallback_base_url.into());
-        self
-    }
-
     pub fn websocket_client(&self) -> P2PoolWebSocketClient {
         let mut client = P2PoolWebSocketClient::with_base_url(self.base_url.clone());
         if let Some((user, pass)) = &self.auth_credentials {
             client = client.with_auth(user.clone(), pass.clone());
         }
-        if let Some(fallback_base_url) = &self.fallback_base_url {
-            client = client.with_fallback_base_url(fallback_base_url.clone());
-        }
+
         client
     }
 
     pub async fn fetch_chain_info(&self) -> Result<ChainInfo, reqwest::Error> {
-        self.fetch_json_with_fallback("/chain_info", &[]).await
+        self.fetch_json("/chain_info", &[]).await
     }
 
     pub async fn fetch_peer_info(&self) -> Result<Vec<PeerInfo>, reqwest::Error> {
-        self.fetch_json_with_fallback("/peers", &[]).await
+        self.fetch_json("/peers", &[]).await
     }
 
     pub async fn fetch_recent_shares(&self, num: u16) -> Result<SharesResponse, reqwest::Error> {
-        self.fetch_json_with_fallback("/shares", &[("num", num.min(100))])
-            .await
+        self.fetch_json("/shares", &[("num", num.min(100))]).await
     }
 
-    async fn fetch_json_with_fallback<T>(
-        &self,
-        path: &str,
-        query: &[(&str, u16)],
-    ) -> Result<T, reqwest::Error>
+    async fn fetch_json<T>(&self, path: &str, query: &[(&str, u16)]) -> Result<T, reqwest::Error>
     where
         T: DeserializeOwned,
     {
-        match self
-            .fetch_json_from_base_url(&self.base_url, path, query, true)
+        self.fetch_json_from_base_url(&self.base_url, path, query, true)
             .await
-        {
-            Ok(data) => Ok(data),
-            Err(error) => {
-                if self.should_try_fallback(&error)
-                    && let Some(fallback_base_url) = &self.fallback_base_url
-                {
-                    return self
-                        .fetch_json_from_base_url(fallback_base_url, path, query, true)
-                        .await;
-                }
-                Err(error)
-            }
-        }
     }
 
     async fn fetch_json_from_base_url<T>(
@@ -194,10 +164,6 @@ impl P2PoolClient {
         let response = request.send().await?.error_for_status()?;
         response.json::<T>().await
     }
-
-    fn should_try_fallback(&self, error: &reqwest::Error) -> bool {
-        self.fallback_base_url.is_some() && (error.is_connect() || error.is_timeout())
-    }
 }
 
 impl Default for P2PoolClient {
@@ -223,44 +189,83 @@ where
     }
 }
 
+fn api_auth_credentials(config: &P2PoolApiConfig) -> Option<(String, String)> {
+    match (&config.auth_user, &config.auth_password) {
+        (Some(user), Some(password)) if !user.is_empty() && !password.is_empty() => {
+            Some((user.clone(), password.clone()))
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use mockito::{Matcher, Server};
     use serde_json::json;
 
-    const PRIMARY_BASE_URL: &str = "http://127.0.0.1:46884";
-    const FALLBACK_BASE_URL: &str = "http://127.0.0.1:46885";
-
-    fn api_config(fallback_base_url: Option<&str>) -> ApiConfig {
-        ApiConfig {
-            base_url: PRIMARY_BASE_URL.to_string(),
-            fallback_base_url: fallback_base_url.map(str::to_string),
-            auth_user: None,
-            auth_pass: None,
-        }
+    fn loaded_p2pool_config() -> P2PoolConfig {
+        P2PoolConfig::load(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/p2pool.toml"
+        ))
+        .expect("fixture config must load")
     }
 
     #[test]
-    fn explicit_base_url_does_not_enable_network_fallback() {
-        let config = api_config(None);
-        let client = P2PoolClient::from_config(config);
+    fn new_starts_without_pdm_side_api_defaults() {
+        let client = P2PoolClient::new();
 
-        assert_eq!(client.base_url, PRIMARY_BASE_URL);
-        assert_eq!(client.fallback_base_url, None);
+        assert_eq!(client.base_url, "");
+        assert_eq!(client.auth_credentials, None);
+    }
+    #[test]
+    fn from_p2pool_config_uses_api_hostname_and_port() {
+        let mut config = loaded_p2pool_config();
+        config.api.hostname = "192.0.2.10".to_string();
+        config.api.port = 39001;
+
+        let client = P2PoolClient::from_p2pool_config(&config);
+
+        assert_eq!(client.base_url, "http://192.0.2.10:39001");
     }
 
     #[test]
-    fn fallback_base_url_can_be_configured() {
-        let config = api_config(Some(FALLBACK_BASE_URL));
-        let client = P2PoolClient::from_config(config);
+    fn from_p2pool_config_uses_api_auth_password_for_basic_auth() {
+        let mut config = loaded_p2pool_config();
+        config.api.auth_user = Some("pdm-user".to_string());
+        config.api.auth_token = Some("stored-token".to_string());
+        config.api.auth_password = Some("pdm-pass".to_string());
 
-        assert_eq!(client.fallback_base_url.as_deref(), Some(FALLBACK_BASE_URL));
+        let client = P2PoolClient::from_p2pool_config(&config);
+
+        assert_eq!(
+            client.auth_credentials,
+            Some(("pdm-user".to_string(), "pdm-pass".to_string()))
+        );
+    }
+
+    #[test]
+    fn from_p2pool_config_does_not_use_stored_auth_token_as_password() {
+        let mut config = loaded_p2pool_config();
+        config.api.auth_user = Some("pdm-user".to_string());
+        config.api.auth_token = Some("stored-token".to_string());
+        config.api.auth_password = None;
+
+        let client = P2PoolClient::from_p2pool_config(&config);
+
+        assert_eq!(client.auth_credentials, None);
     }
 
     #[tokio::test]
-    async fn fallback_fetch_uses_basic_auth_when_configured() {
+    async fn fetch_uses_p2pool_config_api_values() {
         let mut server = Server::new_async().await;
+        let server_url = url::Url::parse(&server.url()).unwrap();
+        let mut config = loaded_p2pool_config();
+        config.api.hostname = server_url.host_str().unwrap().to_string();
+        config.api.port = server_url.port().unwrap();
+        config.api.auth_user = Some("user".to_string());
+        config.api.auth_password = Some("password".to_string());
 
         let mock = server
             .mock("GET", "/chain_info")
@@ -270,10 +275,7 @@ mod tests {
             .with_body(json!({ "total_work": "abc" }).to_string())
             .create();
 
-        let client = P2PoolClient::with_base_url("http://127.0.0.1:1")
-            .with_fallback_base_url(server.url())
-            .with_auth("user".into(), "password".into());
-
+        let client = P2PoolClient::from_p2pool_config(&config);
         let result = client.fetch_chain_info().await.unwrap();
 
         assert_eq!(result.total_work, "abc");

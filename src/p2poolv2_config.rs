@@ -44,7 +44,7 @@ pub struct P2PoolFieldSchema {
 }
 
 /// A single editable TUI row — the view layer equivalent of
-/// `ConfigEntry` in bitcoin_config.rs.
+/// `P2PoolConfigEntry` in this module.
 /// The external `p2poolv2_config` crate has no concept of this;
 /// it only knows nested structs for deserialization.
 #[derive(Debug, Clone)]

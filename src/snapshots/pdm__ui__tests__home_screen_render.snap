@@ -1,6 +1,5 @@
 ---
 source: src/ui.rs
-assertion_line: 117
 expression: terminal.backend()
 ---
 TestBackend {
@@ -9,14 +8,14 @@ TestBackend {
         content: [
             "┌ PDM ──────────────────┐┌ Home ───────────────────────────────────────────────┐",
             "│Home                   ││Welcome to PDM.                                      │",
-            "│Bitcoin Config         ││                                                     │",
-            "│Bitcoin Status         ││Select a config from the sidebar to edit.            │",
-            "│P2Pool Config          ││                                                     │",
+            "│Bitcoin Status         ││                                                     │",
+            "│P2Pool Config          ││Select a config from the sidebar to edit.            │",
             "│P2Pool Status          ││                                                     │",
-            "│LN Config              ││                                                     │",
-            "│LN Status              ││                                                     │",
-            "│Shares Market          ││                                                     │",
             "│Settings               ││                                                     │",
+            "│                       ││                                                     │",
+            "│                       ││                                                     │",
+            "│                       ││                                                     │",
+            "│                       ││                                                     │",
             "│                       ││                                                     │",
             "│                       ││                                                     │",
             "│                       ││                                                     │",

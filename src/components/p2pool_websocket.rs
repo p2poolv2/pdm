@@ -2,11 +2,11 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use crate::config::{ApiConfig, load_api_config};
 use anyhow::{Context, Result};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use futures_util::{SinkExt, StreamExt};
+use p2poolv2_config::{ApiConfig as P2PoolApiConfig, Config as P2PoolConfig};
 use serde::{Deserialize, Deserializer};
 use tokio::sync::mpsc;
 use tokio_tungstenite::connect_async;
@@ -16,7 +16,6 @@ use url::Url;
 #[derive(Debug, Clone)]
 pub struct P2PoolWebSocketClient {
     base_url: String,
-    fallback_base_url: Option<String>,
     auth_credentials: Option<(String, String)>,
 }
 
@@ -73,19 +72,20 @@ pub enum LiveP2PoolEvent {
 
 impl P2PoolWebSocketClient {
     pub fn new() -> Self {
-        Self::from_config(load_api_config().unwrap_or_default())
+        Self::with_base_url("")
     }
 
-    fn from_config(config: ApiConfig) -> Self {
-        let client = P2PoolWebSocketClient::with_base_url(&config.base_url);
+    pub fn from_p2pool_config(config: &P2PoolConfig) -> Self {
+        Self::from_api_config(&config.api)
+    }
 
-        let client = if let Some(fallback) = &config.fallback_base_url {
-            client.with_fallback_base_url(fallback)
-        } else {
-            client
-        };
+    fn from_api_config(config: &P2PoolApiConfig) -> Self {
+        let client = P2PoolWebSocketClient::with_base_url(format!(
+            "http://{}:{}",
+            config.hostname, config.port
+        ));
 
-        if let Some((user, pass)) = config.auth_user.zip(config.auth_pass) {
+        if let Some((user, pass)) = api_auth_credentials(config) {
             client.with_auth(user, pass)
         } else {
             client
@@ -95,18 +95,12 @@ impl P2PoolWebSocketClient {
     pub fn with_base_url(base_url: impl Into<String>) -> Self {
         Self {
             base_url: base_url.into(),
-            fallback_base_url: None,
             auth_credentials: None,
         }
     }
 
     pub fn with_auth(mut self, user: String, pass: String) -> Self {
         self.auth_credentials = Some((user, pass));
-        self
-    }
-
-    pub fn with_fallback_base_url(mut self, fallback_base_url: impl Into<String>) -> Self {
-        self.fallback_base_url = Some(fallback_base_url.into());
         self
     }
 
@@ -174,18 +168,6 @@ impl P2PoolWebSocketClient {
                         primary_error = Some(error);
                     }
                 }
-            }
-        }
-
-        if let Some(fallback_base_url) = &self.fallback_base_url {
-            let mut fallback_url = self.ws_url_from_base_url(fallback_base_url, "/ws")?;
-            self.apply_auth(&mut fallback_url);
-            if self
-                .subscribe_live_events_at(fallback_url, tx)
-                .await
-                .is_ok()
-            {
-                return Ok(());
             }
         }
 
@@ -274,6 +256,15 @@ where
     }
 }
 
+fn api_auth_credentials(config: &P2PoolApiConfig) -> Option<(String, String)> {
+    match (&config.auth_user, &config.auth_password) {
+        (Some(user), Some(password)) if !user.is_empty() && !password.is_empty() => {
+            Some((user.clone(), password.clone()))
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -283,6 +274,21 @@ mod tests {
     use tokio_tungstenite::accept_async;
     use tokio_tungstenite::tungstenite::Message;
 
+    fn loaded_p2pool_config() -> P2PoolConfig {
+        P2PoolConfig::load(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/p2pool.toml"
+        ))
+        .expect("fixture config must load")
+    }
+
+    #[test]
+    fn new_starts_without_pdm_side_api_defaults() {
+        let client = P2PoolWebSocketClient::new();
+
+        assert_eq!(client.base_url, "");
+        assert_eq!(client.auth_credentials, None);
+    }
     #[test]
     fn ws_url_converts_http_to_ws_and_encodes_auth_token() {
         let client = P2PoolWebSocketClient::with_base_url("http://127.0.0.1:46884")
@@ -397,9 +403,16 @@ mod tests {
             let websocket = accept_async(stream).await.unwrap();
             let (mut write, mut read) = websocket.split();
 
-            for _ in 0..2 {
-                let _ = read.next().await.unwrap().unwrap();
-            }
+            let shares_subscription = read.next().await.unwrap().unwrap().into_text().unwrap();
+            let peers_subscription = read.next().await.unwrap().unwrap().into_text().unwrap();
+            assert_eq!(
+                shares_subscription,
+                r#"{"action":"subscribe","topic":"shares"}"#
+            );
+            assert_eq!(
+                peers_subscription,
+                r#"{"action":"subscribe","topic":"peers"}"#
+            );
 
             write.send(Message::Binary(vec![1, 2, 3])).await.unwrap();
             write
@@ -505,10 +518,41 @@ mod tests {
         assert!(event.is_err());
     }
 
+    #[test]
+    fn from_p2pool_config_builds_websocket_url_from_api_section() {
+        let mut config = loaded_p2pool_config();
+        config.api.hostname = "192.0.2.10".to_string();
+        config.api.port = 39001;
+        config.api.auth_user = Some("ws-user".to_string());
+        config.api.auth_token = Some("stored-token".to_string());
+        config.api.auth_password = Some("ws-pass".to_string());
+
+        let client = P2PoolWebSocketClient::from_p2pool_config(&config);
+        let url = client.ws_url_with_auth("/ws").unwrap();
+
+        assert_eq!(
+            url.as_str(),
+            "ws://192.0.2.10:39001/ws?token=d3MtdXNlcjp3cy1wYXNz"
+        );
+    }
+
+    #[test]
+    fn from_p2pool_config_does_not_use_stored_auth_token_as_password() {
+        let mut config = loaded_p2pool_config();
+        config.api.auth_user = Some("ws-user".to_string());
+        config.api.auth_token = Some("stored-token".to_string());
+        config.api.auth_password = None;
+
+        let client = P2PoolWebSocketClient::from_p2pool_config(&config);
+        let url = client.ws_url_with_auth("/ws").unwrap();
+
+        assert_eq!(url.as_str(), "ws://127.0.0.1:46884/ws");
+    }
+
     #[tokio::test]
-    async fn subscribe_live_events_uses_fallback_base_url_on_connection_failure() {
+    async fn subscribe_live_events_uses_p2pool_config_api_values() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let fallback_addr = listener.local_addr().unwrap();
+        let addr = listener.local_addr().unwrap();
 
         let server = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.unwrap();
@@ -522,7 +566,7 @@ mod tests {
                     serde_json::json!({
                         "topic": "Share",
                         "data": {
-                            "blockhash": "fallback",
+                            "blockhash": "from-config",
                             "prev_blockhash": "prev",
                             "height": 7,
                             "miner_address": "miner",
@@ -538,8 +582,10 @@ mod tests {
             let _ = write.close().await;
         });
 
-        let client = P2PoolWebSocketClient::with_base_url("http://127.0.0.1:1")
-            .with_fallback_base_url(format!("http://{fallback_addr}"));
+        let mut config = loaded_p2pool_config();
+        config.api.hostname = addr.ip().to_string();
+        config.api.port = addr.port();
+        let client = P2PoolWebSocketClient::from_p2pool_config(&config);
         let (tx, mut rx) = mpsc::unbounded_channel();
         let subscribe_handle = tokio::spawn(async move { client.subscribe_live_events(tx).await });
 

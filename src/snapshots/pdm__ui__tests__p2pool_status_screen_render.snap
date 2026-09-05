@@ -1,6 +1,6 @@
 ---
 source: src/ui.rs
-assertion_line: 219
+assertion_line: 131
 expression: terminal.backend()
 ---
 TestBackend {
@@ -9,14 +9,14 @@ TestBackend {
         content: [
             "┌ PDM ──────────────────┐┌ Info ───────────────────────────────────────────────┐",
             "│Home                   ││ Chain Info │ Shares │ Peers Info                    │",
-            "│Bitcoin Config         ││                                                     │",
-            "│Bitcoin Status         │└─────────────────────────────────────────────────────┘",
-            "│P2Pool Config          │┌ Chain Info ─────────────────────────────────────────┐",
-            "│P2Pool Status          ││Loading chain info...                                │",
-            "│LN Config              ││                                                     │",
-            "│LN Status              ││                                                     │",
-            "│Shares Market          ││                                                     │",
-            "│Settings               ││                                                     │",
+            "│Bitcoin Status         ││                                                     │",
+            "│P2Pool Config          │└─────────────────────────────────────────────────────┘",
+            "│P2Pool Status          │┌ Chain Info ─────────────────────────────────────────┐",
+            "│Settings               ││Select a P2Poolv2 config file to load P2Pool chain   │",
+            "│                       ││info.                                                │",
+            "│                       ││                                                     │",
+            "│                       ││                                                     │",
+            "│                       ││                                                     │",
             "│                       ││                                                     │",
             "│                       ││                                                     │",
             "│                       ││                                                     │",
@@ -36,10 +36,12 @@ TestBackend {
             x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
             x: 27, y: 1, fg: Black, bg: Gray, underline: Reset, modifier: NONE,
             x: 37, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
-            x: 1, y: 5, fg: Black, bg: Gray, underline: Reset, modifier: NONE,
-            x: 24, y: 5, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+            x: 1, y: 4, fg: Black, bg: Gray, underline: Reset, modifier: NONE,
+            x: 24, y: 4, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
             x: 26, y: 5, fg: DarkGray, bg: Reset, underline: Reset, modifier: NONE,
-            x: 47, y: 5, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+            x: 76, y: 5, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+            x: 26, y: 6, fg: DarkGray, bg: Reset, underline: Reset, modifier: NONE,
+            x: 31, y: 6, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
             x: 0, y: 23, fg: White, bg: DarkGray, underline: Reset, modifier: NONE,
             x: 4, y: 23, fg: DarkGray, bg: Black, underline: Reset, modifier: NONE,
             x: 23, y: 23, fg: White, bg: DarkGray, underline: Reset, modifier: NONE,
