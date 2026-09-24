@@ -214,7 +214,7 @@ fn bootstrap_from_settings(app: &mut App) {
         match P2PoolConfig::load(p) {
             Ok(cfg) => {
                 app.p2pool_conf_path = Some(path.clone());
-                app.p2pool_config = Some(cfg);
+                app.set_p2pool_config(cfg);
             }
             Err(e) => {
                 eprintln!("pdm: failed to load p2pool config on startup: {e}");
@@ -274,11 +274,11 @@ fn handle_action(action: AppAction, app: &mut App) -> Result<ControlFlow<()>> {
                                             .to_string(),
                                     );
                                     app.p2pool_conf_path = None;
-                                    app.p2pool_config = None;
+                                    app.clear_p2pool_config();
                                 } else {
                                     // Only set path + persist settings when config is actually valid
                                     app.p2pool_conf_path = Some(path.clone());
-                                    app.p2pool_config = Some(cfg);
+                                    app.set_p2pool_config(cfg);
                                     app.p2pool_config_view.sidebar_focused = false;
                                     app.p2pool_config_view.warning_message = None;
                                     app.p2pool_config_view.selected_index = 0;
@@ -296,7 +296,7 @@ fn handle_action(action: AppAction, app: &mut App) -> Result<ControlFlow<()>> {
                                     e
                                 ));
                                 app.p2pool_conf_path = None;
-                                app.p2pool_config = None;
+                                app.clear_p2pool_config();
                             }
                         }
                         app.current_screen = CurrentScreen::P2PoolConfig;
@@ -315,7 +315,7 @@ fn handle_action(action: AppAction, app: &mut App) -> Result<ControlFlow<()>> {
                                         should_save = false;
                                     } else {
                                         app.p2pool_conf_path = Some(path.clone());
-                                        app.p2pool_config = Some(cfg);
+                                        app.set_p2pool_config(cfg);
                                         app.settings.p2pool_conf_path = Some(path.clone());
                                         app.p2pool_config_view.warning_message = None;
                                         app.p2pool_config_view.selected_index = 0;
@@ -352,7 +352,7 @@ fn handle_action(action: AppAction, app: &mut App) -> Result<ControlFlow<()>> {
                 0 => {
                     app.settings.p2pool_conf_path = None;
                     app.p2pool_conf_path = None;
-                    app.p2pool_config = None;
+                    app.clear_p2pool_config();
                 }
                 1 => app.settings.settings_dir_override = None,
                 _ => {}
@@ -366,6 +366,7 @@ fn handle_action(action: AppAction, app: &mut App) -> Result<ControlFlow<()>> {
             if let Some(cfg) = app.p2pool_config.as_mut() {
                 match apply_p2pool_edit(cfg, index, &value) {
                     Ok(()) => {
+                        app.refresh_p2pool_clients_from_config();
                         app.p2pool_config_view.warning_message = None;
                     }
                     Err(e) => {
@@ -574,6 +575,26 @@ port = 46884
         .unwrap();
     }
 
+    fn write_valid_p2pool_toml_with_api(
+        path: &std::path::Path,
+        hostname: &str,
+        port: u16,
+        auth_user: Option<&str>,
+        auth_password: Option<&str>,
+    ) {
+        write_valid_p2pool_toml(path);
+        let content = std::fs::read_to_string(path).unwrap();
+        let mut doc = content.parse::<toml_edit::DocumentMut>().unwrap();
+        doc["api"]["hostname"] = toml_edit::value(hostname);
+        doc["api"]["port"] = toml_edit::value(i64::from(port));
+        if let Some(auth_user) = auth_user {
+            doc["api"]["auth_user"] = toml_edit::value(auth_user);
+        }
+        if let Some(auth_password) = auth_password {
+            doc["api"]["auth_password"] = toml_edit::value(auth_password);
+        }
+        std::fs::write(path, doc.to_string()).unwrap();
+    }
     /// Write a TOML that parses fine but has an empty hostname (fails sanity check).
     fn write_empty_hostname_toml(path: &std::path::Path) {
         std::fs::write(
@@ -809,7 +830,7 @@ port = 46884
         let mut app = App::new();
         app.current_screen = CurrentScreen::P2PoolConfig;
         app.p2pool_conf_path = Some(file);
-        app.p2pool_config = Some(cfg);
+        app.set_p2pool_config(cfg);
         app.p2pool_config_view.sidebar_focused = false;
 
         let outcome = dispatch_key(press(KeyCode::Down), &mut app);
@@ -1077,6 +1098,43 @@ port = 46884
         assert_eq!(app.current_screen, CurrentScreen::Settings);
     }
 
+    #[tokio::test]
+    #[serial]
+    async fn file_selected_p2pool_config_updates_api_client_from_api_section() {
+        use mockito::Server;
+        use serde_json::json;
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        redirect_saves_to(&dir);
+        let mut server = Server::new_async().await;
+        let server_url = url::Url::parse(&server.url()).unwrap();
+        let path = dir.path().join("p2pool.toml");
+        write_valid_p2pool_toml_with_api(
+            &path,
+            server_url.host_str().unwrap(),
+            server_url.port().unwrap(),
+            Some("user"),
+            Some("password"),
+        );
+
+        let mock = server
+            .mock("GET", "/chain_info")
+            .match_header("authorization", "Basic dXNlcjpwYXNzd29yZA==")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(json!({ "total_work": "abc" }).to_string())
+            .create();
+
+        let mut app = App::new();
+        app.explorer_trigger = Some(ExplorerTrigger::P2PoolConfig);
+        run(AppAction::FileSelected(path), &mut app);
+
+        let info = app.p2pool_client.fetch_chain_info().await.unwrap();
+
+        assert_eq!(info.total_work, "abc");
+        mock.assert();
+    }
     #[test]
     #[serial]
     fn file_selected_for_settings_wildcard_field_is_noop() {
@@ -1234,7 +1292,7 @@ port = 46884
         write_valid_p2pool_toml(&file);
 
         let cfg = P2PoolConfig::load(file.to_str().unwrap()).unwrap();
-        app.p2pool_config = Some(cfg);
+        app.set_p2pool_config(cfg);
         app.p2pool_config_view.warning_message = Some("old warning".to_string());
 
         run(
@@ -1253,7 +1311,7 @@ port = 46884
 
         let mut app = App::new();
         let cfg = P2PoolConfig::load(file.to_str().unwrap()).unwrap();
-        app.p2pool_config = Some(cfg);
+        app.set_p2pool_config(cfg);
 
         // invalid numeric/bool/etc depending on index used by your flatten_config
         run(
@@ -1274,7 +1332,7 @@ port = 46884
         let cfg = P2PoolConfig::load(file.to_str().unwrap()).unwrap();
 
         app.p2pool_conf_path = Some(file.clone());
-        app.p2pool_config = Some(cfg);
+        app.set_p2pool_config(cfg);
 
         run(AppAction::SaveP2PoolConfig, &mut app);
 
@@ -1295,7 +1353,7 @@ port = 46884
         let cfg = P2PoolConfig::load(file.to_str().unwrap()).unwrap();
 
         app.p2pool_conf_path = Some(bad_path);
-        app.p2pool_config = Some(cfg);
+        app.set_p2pool_config(cfg);
 
         run(AppAction::SaveP2PoolConfig, &mut app);
 

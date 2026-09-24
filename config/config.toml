@@ -1,7 +1,0 @@
-[api]
-base_url = "http://127.0.0.1:46884"
-# fallback_base_url = "http://127.0.0.1:46885"
-host = "127.0.0.1"
-port = 46884
-auth_user = "p2pool"
-auth_pass = "p2pool"
