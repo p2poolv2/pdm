@@ -1,6 +1,5 @@
 ---
 source: src/ui.rs
-assertion_line: 220
 expression: terminal.backend()
 ---
 TestBackend {
@@ -9,7 +8,6 @@ TestBackend {
         content: [
             "┌ PDM ──────────────────┐┌ Shares Market ──────────────────────────────────────┐",
             "│Home                   ││Shares Market                                        │",
-            "│Bitcoin Config         ││                                                     │",
             "│Bitcoin Status         ││                                                     │",
             "│P2Pool Config          ││                                                     │",
             "│P2Pool Status          ││                                                     │",
@@ -29,13 +27,14 @@ TestBackend {
             "│                       ││                                                     │",
             "│                       ││                                                     │",
             "│                       ││                                                     │",
+            "│                       ││                                                     │",
             "└───────────────────────┘└─────────────────────────────────────────────────────┘",
             " ↑↓  Navigate sidebar   Enter  Select   q  Quit                                 ",
         ],
         styles: [
             x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
-            x: 1, y: 8, fg: Black, bg: Gray, underline: Reset, modifier: NONE,
-            x: 24, y: 8, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+            x: 1, y: 7, fg: Black, bg: Gray, underline: Reset, modifier: NONE,
+            x: 24, y: 7, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
             x: 0, y: 23, fg: White, bg: DarkGray, underline: Reset, modifier: NONE,
             x: 4, y: 23, fg: DarkGray, bg: Black, underline: Reset, modifier: NONE,
             x: 23, y: 23, fg: White, bg: DarkGray, underline: Reset, modifier: NONE,

@@ -2,12 +2,12 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use crate::bitcoin_config::ConfigEntry;
 use anyhow::{Context, Result, anyhow, bail};
+use p2poolv2_config::Config as P2PoolConfig;
 use reqwest::Client;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
-use std::{path::PathBuf, time::Duration};
+use std::time::Duration;
 
 const REQUEST_TIMEOUT_SECONDS: u64 = 10;
 
@@ -27,15 +27,6 @@ pub struct BitcoinChainInfo {
     pub initial_block_download: Option<bool>,
     pub connection_count: Option<u64>,
     pub connected_peer_addresses: Vec<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BitcoinNetwork {
-    Mainnet,
-    Testnet,
-    Testnet4,
-    Signet,
-    Regtest,
 }
 
 #[derive(Debug, Deserialize)]
@@ -74,19 +65,14 @@ struct RpcError {
 
 impl BitcoinClient {
     #[must_use]
-    pub fn from_config_entries(entries: &[ConfigEntry]) -> Self {
-        let network = network_from_entries(entries);
-        let port = entry_value(entries, "rpcport")
-            .and_then(|value| value.parse::<u16>().ok())
-            .unwrap_or_else(|| default_rpc_port(network));
-        let host = entry_value(entries, "rpcbind").unwrap_or("127.0.0.1");
-        let url = rpc_url(host, port);
-        let auth_credentials = rpc_auth(entries, network);
-
+    pub fn from_p2pool_config(config: &P2PoolConfig) -> Self {
         Self {
             client: build_client(),
-            url,
-            auth_credentials,
+            url: config.bitcoinrpc.url.clone(),
+            auth_credentials: Some((
+                config.bitcoinrpc.username.clone(),
+                config.bitcoinrpc.password.clone(),
+            )),
         }
     }
 
@@ -161,138 +147,6 @@ fn build_client() -> Client {
         .expect("Failed to build reqwest client")
 }
 
-fn entry_value<'a>(entries: &'a [ConfigEntry], key: &str) -> Option<&'a str> {
-    entries
-        .iter()
-        .find(|entry| entry.enabled && entry.key == key && !entry.value.trim().is_empty())
-        .map(|entry| entry.value.trim())
-}
-
-fn network_from_entries(entries: &[ConfigEntry]) -> BitcoinNetwork {
-    if bool_entry(entries, "regtest") {
-        return BitcoinNetwork::Regtest;
-    }
-    if bool_entry(entries, "signet") {
-        return BitcoinNetwork::Signet;
-    }
-    if bool_entry(entries, "testnet4") {
-        return BitcoinNetwork::Testnet4;
-    }
-    if bool_entry(entries, "testnet") {
-        return BitcoinNetwork::Testnet;
-    }
-
-    match entry_value(entries, "chain")
-        .unwrap_or_default()
-        .to_ascii_lowercase()
-        .as_str()
-    {
-        "test" | "testnet" | "testnet3" => BitcoinNetwork::Testnet,
-        "testnet4" => BitcoinNetwork::Testnet4,
-        "signet" => BitcoinNetwork::Signet,
-        "regtest" => BitcoinNetwork::Regtest,
-        _ => BitcoinNetwork::Mainnet,
-    }
-}
-
-fn bool_entry(entries: &[ConfigEntry], key: &str) -> bool {
-    matches!(
-        entry_value(entries, key)
-            .map(str::to_ascii_lowercase)
-            .as_deref(),
-        Some("1" | "true" | "yes" | "on")
-    )
-}
-
-fn default_rpc_port(network: BitcoinNetwork) -> u16 {
-    match network {
-        BitcoinNetwork::Mainnet => 8332,
-        BitcoinNetwork::Testnet => 18332,
-        BitcoinNetwork::Testnet4 => 48332,
-        BitcoinNetwork::Signet => 38332,
-        BitcoinNetwork::Regtest => 18443,
-    }
-}
-
-fn rpc_url(host: &str, port: u16) -> String {
-    let host = host.trim().trim_matches('/');
-    if host.starts_with("http://") || host.starts_with("https://") {
-        return host.to_string();
-    }
-    if has_explicit_port(host) {
-        return format!("http://{host}");
-    }
-    if host.contains(':') && !host.starts_with('[') {
-        return format!("http://[{host}]:{port}");
-    }
-    format!("http://{host}:{port}")
-}
-
-fn has_explicit_port(host: &str) -> bool {
-    if let Some(end_bracket) = host.find(']') {
-        return host[end_bracket + 1..].starts_with(':');
-    }
-
-    host.matches(':').count() == 1
-        && host
-            .rsplit_once(':')
-            .is_some_and(|(_, port)| port.parse::<u16>().is_ok())
-}
-
-fn rpc_auth(entries: &[ConfigEntry], network: BitcoinNetwork) -> Option<(String, String)> {
-    if let (Some(user), Some(pass)) = (
-        entry_value(entries, "rpcuser"),
-        entry_value(entries, "rpcpassword"),
-    ) {
-        return Some((user.to_string(), pass.to_string()));
-    }
-
-    read_cookie_auth(entries, network).ok()
-}
-
-fn read_cookie_auth(entries: &[ConfigEntry], network: BitcoinNetwork) -> Result<(String, String)> {
-    let cookie_path = cookie_path(entries, network);
-    let content = std::fs::read_to_string(&cookie_path)
-        .with_context(|| format!("could not read RPC cookie at {}", cookie_path.display()))?;
-    let (user, pass) = content
-        .trim()
-        .split_once(':')
-        .ok_or_else(|| anyhow!("RPC cookie did not contain username and password"))?;
-
-    Ok((user.to_string(), pass.to_string()))
-}
-
-fn cookie_path(entries: &[ConfigEntry], network: BitcoinNetwork) -> PathBuf {
-    if let Some(path) = entry_value(entries, "rpccookiefile") {
-        let configured = PathBuf::from(path);
-        if configured.is_absolute() {
-            return configured;
-        }
-        return data_dir(entries, network).join(configured);
-    }
-
-    data_dir(entries, network).join(".cookie")
-}
-
-fn data_dir(entries: &[ConfigEntry], network: BitcoinNetwork) -> PathBuf {
-    let base = entry_value(entries, "datadir")
-        .map(PathBuf::from)
-        .or_else(default_data_dir)
-        .unwrap_or_default();
-
-    match network {
-        BitcoinNetwork::Mainnet => base,
-        BitcoinNetwork::Testnet => base.join("testnet3"),
-        BitcoinNetwork::Testnet4 => base.join("testnet4"),
-        BitcoinNetwork::Signet => base.join("signet"),
-        BitcoinNetwork::Regtest => base.join("regtest"),
-    }
-}
-
-fn default_data_dir() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".bitcoin"))
-}
-
 fn display_network(chain: &str) -> &str {
     match chain {
         "main" => "mainnet",
@@ -309,53 +163,20 @@ mod tests {
     use mockito::{Matcher, Server};
     use serde_json::json;
 
-    fn entry(key: &str, value: &str) -> ConfigEntry {
-        ConfigEntry {
-            key: key.to_string(),
-            value: value.to_string(),
-            schema: None,
-            enabled: true,
-            section: None,
-        }
-    }
-
     #[test]
-    fn builds_default_mainnet_endpoint() {
-        let client = BitcoinClient::from_config_entries(&[]);
+    fn uses_p2pool_bitcoinrpc_configuration() {
+        let config = p2poolv2_config::Config::load(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/p2pool.toml"
+        ))
+        .unwrap();
+        let client = BitcoinClient::from_p2pool_config(&config);
 
-        assert_eq!(client.url, "http://127.0.0.1:8332");
-    }
-
-    #[test]
-    fn uses_configured_rpc_port_and_auth() {
-        let entries = vec![
-            entry("rpcport", "18443"),
-            entry("rpcuser", "alice"),
-            entry("rpcpassword", "secret"),
-        ];
-        let client = BitcoinClient::from_config_entries(&entries);
-
-        assert_eq!(client.url, "http://127.0.0.1:18443");
+        assert_eq!(client.url, config.bitcoinrpc.url);
         assert_eq!(
             client.auth_credentials,
-            Some(("alice".to_string(), "secret".to_string()))
+            Some((config.bitcoinrpc.username, config.bitcoinrpc.password))
         );
-    }
-
-    #[test]
-    fn detects_network_from_chain_setting() {
-        let entries = vec![entry("chain", "testnet4")];
-        let client = BitcoinClient::from_config_entries(&entries);
-
-        assert_eq!(client.url, "http://127.0.0.1:48332");
-    }
-
-    #[test]
-    fn preserves_rpcbind_with_explicit_port() {
-        let entries = vec![entry("rpcbind", "127.0.0.1:18443")];
-        let client = BitcoinClient::from_config_entries(&entries);
-
-        assert_eq!(client.url, "http://127.0.0.1:18443");
     }
 
     #[tokio::test]
@@ -665,59 +486,5 @@ mod tests {
         let result = client.fetch_chain_info().await.unwrap();
 
         assert_eq!(result.block_height, 1);
-    }
-
-    #[test]
-    fn ignores_disabled_and_whitespace_only_config_entries() {
-        let entries = vec![
-            entry("rpcport", "   "),
-            ConfigEntry {
-                key: "rpcport".to_string(),
-                value: "18443".to_string(),
-                schema: None,
-                enabled: false,
-                section: None,
-            },
-        ];
-        let client = BitcoinClient::from_config_entries(&entries);
-
-        assert_eq!(client.url, "http://127.0.0.1:8332");
-    }
-
-    #[test]
-    fn falls_back_to_cookie_auth_when_rpc_password_is_missing() {
-        let temp_dir = std::env::temp_dir().join(format!(
-            "pdm-bitcoin-client-test-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        let cookie_path = temp_dir.join(".cookie");
-        std::fs::create_dir_all(&temp_dir).unwrap();
-        std::fs::write(&cookie_path, "alice:secret").unwrap();
-
-        let entries = vec![
-            entry("rpcuser", "alice"),
-            entry("rpccookiefile", cookie_path.to_string_lossy().as_ref()),
-        ];
-        let client = BitcoinClient::from_config_entries(&entries);
-
-        assert_eq!(
-            client.auth_credentials,
-            Some(("alice".to_string(), "secret".to_string()))
-        );
-
-        let _ = std::fs::remove_file(cookie_path);
-        let _ = std::fs::remove_dir(temp_dir);
-    }
-
-    #[test]
-    fn formats_ipv6_rpcbind_without_explicit_port() {
-        let entries = vec![entry("rpcbind", "::1")];
-        let client = BitcoinClient::from_config_entries(&entries);
-
-        assert_eq!(client.url, "http://[::1]:8332");
     }
 }

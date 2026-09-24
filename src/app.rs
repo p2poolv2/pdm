@@ -2,9 +2,7 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use crate::bitcoin_config::ConfigEntry as BitcoinEntry;
 use crate::components::bitcoin_client::{BitcoinChainInfo, BitcoinClient};
-use crate::components::bitcoin_config_view::BitcoinConfigView;
 use crate::components::file_explorer::FileExplorer;
 use crate::components::p2pool_client::{ChainInfo, P2PoolClient, PeerInfo, SharesResponse};
 use crate::components::p2pool_config_view::P2PoolConfigView;
@@ -20,7 +18,6 @@ use tokio::sync::mpsc;
 /// Sidebar items labels
 pub const SIDEBAR_ITEMS: &[(&str, CurrentScreen)] = &[
     ("Home", CurrentScreen::Home),
-    ("Bitcoin Config", CurrentScreen::BitcoinConfig),
     ("Bitcoin Status", CurrentScreen::BitcoinStatus),
     ("P2Pool Config", CurrentScreen::P2PoolConfig),
     ("P2Pool Status", CurrentScreen::P2PoolStatus),
@@ -33,7 +30,7 @@ pub const SIDEBAR_ITEMS: &[(&str, CurrentScreen)] = &[
 pub const MAX_SIDEBAR_INDEX: usize = SIDEBAR_ITEMS.len() - 1;
 
 /// Tab labels for the Bitcoin Status view
-pub const BITCOIN_STATUS_TABS: &[&str] = &["Chain Info", "System", "Logs", "Peers"];
+pub const BITCOIN_STATUS_TABS: &[&str] = &["Chain Info", "Peers"];
 
 pub const MAX_BITCOIN_STATUS_TAB: usize = BITCOIN_STATUS_TABS.len() - 1;
 
@@ -45,7 +42,6 @@ pub const MAX_P2POOL_STATUS_TAB: usize = P2POOL_STATUS_TABS.len() - 1;
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum CurrentScreen {
     Home,
-    BitcoinConfig,
     BitcoinStatus,
     P2PoolConfig,
     P2PoolStatus,
@@ -59,7 +55,6 @@ pub enum CurrentScreen {
 /// Identifies which screen (and optionally which field) triggered the file explorer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExplorerTrigger {
-    BitcoinConfig,
     P2PoolConfig,
     /// The `usize` is the settings field index (0–`FIELD_COUNT - 1`).
     Settings(usize),
@@ -79,10 +74,6 @@ pub enum AppAction {
     FileSelected(PathBuf),
     // Closes the explorer without selection
     CloseModal,
-    // Commits an edited value: (entry index, new value)
-    CommitEdit(usize, String),
-    // Saves bitcoin config to disk
-    SaveBitcoinConfig,
     /// Commits an edited p2pool config value: (entry index, new value)
     CommitP2PoolEdit(usize, String),
     /// Saves p2pool config to disk
@@ -97,14 +88,11 @@ pub struct App {
     pub current_screen: CurrentScreen,
     pub sidebar_index: usize,
     pub explorer_trigger: Option<ExplorerTrigger>,
-    pub bitcoin_conf_path: Option<PathBuf>,
     pub p2pool_conf_path: Option<PathBuf>,
     pub explorer: FileExplorer,
-    pub bitcoin_config_view: BitcoinConfigView,
     pub p2pool_config_view: P2PoolConfigView,
     pub settings_view: SettingsView,
     pub p2pool_config: Option<P2PoolConfig>,
-    pub bitcoin_data: Vec<BitcoinEntry>,
     pub bitcoin_status_tab: usize,
     pub bitcoin_chain_info: Option<BitcoinChainInfo>,
     pub bitcoin_chain_info_error: Option<String>,
@@ -154,14 +142,11 @@ impl App {
             current_screen: CurrentScreen::Home,
             sidebar_index: 0,
             explorer_trigger: None,
-            bitcoin_conf_path: None,
             p2pool_conf_path: None,
             explorer: FileExplorer::new(),
-            bitcoin_config_view: BitcoinConfigView::new(),
             p2pool_config_view: P2PoolConfigView::new(),
             settings_view: SettingsView::new(),
             p2pool_config: None,
-            bitcoin_data: Vec::new(),
             bitcoin_status_tab: 0,
             bitcoin_chain_info: None,
             bitcoin_chain_info_error: None,
@@ -316,12 +301,6 @@ impl App {
 
     // Logic to switch between sidebar items
     pub fn toggle_menu(&mut self) {
-        if self.current_screen == CurrentScreen::BitcoinConfig {
-            self.bitcoin_config_view.warning_message = None;
-            self.bitcoin_config_view.save_message = None;
-            self.bitcoin_config_view.editing = false;
-            self.bitcoin_config_view.edit_input.clear();
-        }
         if self.current_screen == CurrentScreen::P2PoolConfig {
             self.p2pool_config_view.warning_message = None;
             self.p2pool_config_view.save_message = None;
@@ -380,11 +359,11 @@ impl App {
         self.bitcoin_chain_info = None;
         self.bitcoin_chain_info_error = None;
 
-        if self.bitcoin_conf_path.is_none() {
+        let Some(config) = self.p2pool_config.as_ref() else {
             return;
-        }
+        };
 
-        let client = BitcoinClient::from_config_entries(&self.bitcoin_data);
+        let client = BitcoinClient::from_p2pool_config(config);
         let tx = self.bitcoin_chain_info_tx.clone();
 
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
@@ -480,9 +459,8 @@ mod tests {
     }
 
     #[test]
-    fn fetch_bitcoin_chain_info_clears_state_without_configured_bitcoin_conf() {
+    fn fetch_bitcoin_chain_info_clears_state_without_configured_p2pool_config() {
         let mut app = App::new();
-        app.bitcoin_conf_path = None;
         app.bitcoin_chain_info = Some(BitcoinChainInfo {
             network: "mainnet".to_string(),
             block_height: 1,

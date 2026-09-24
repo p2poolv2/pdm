@@ -8,7 +8,6 @@ TestBackend {
         content: [
             "┌ PDM ──────────────────┐┌ Bitcoin Config ─────────────────────────────────────┐",
             "│Home                   ││Press [Enter] to select a bitcoin.conf file          │",
-            "│Bitcoin Config         ││                                                     │",
             "│Bitcoin Status         ││                                                     │",
             "│P2Pool Config          ││                                                     │",
             "│P2Pool Status          ││                                                     │",
