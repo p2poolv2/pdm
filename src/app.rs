@@ -32,7 +32,7 @@ pub const BITCOIN_STATUS_TABS: &[&str] = &["Chain Info", "Peers"];
 pub const MAX_BITCOIN_STATUS_TAB: usize = BITCOIN_STATUS_TABS.len() - 1;
 
 /// Tab labels for the P2Pool Status view
-pub const P2POOL_STATUS_TABS: &[&str] = &["Chain Info", "Shares", "Peers Info"];
+pub const P2POOL_STATUS_TABS: &[&str] = &["Chain Info", "Shares", "Peers Info", "System"];
 
 pub const MAX_P2POOL_STATUS_TAB: usize = P2POOL_STATUS_TABS.len() - 1;
 
@@ -72,6 +72,10 @@ pub enum AppAction {
     CommitP2PoolEdit(usize, String),
     /// Saves p2pool config to disk
     SaveP2PoolConfig,
+    /// P2poolv2 Service
+    StartP2Pool,
+    StopP2Pool,
+    RestartP2Pool,
     // Open the file explorer to pick a path for a settings field (field index)
     OpenExplorerForSettings(usize),
     // Clear a settings field by index, setting it back to None
@@ -102,6 +106,7 @@ pub struct App {
     pub p2pool_status_tab: usize,
     pub chain_info: Option<ChainInfo>,
     pub p2pool_chain_info_error: Option<String>,
+    pub p2pool_service_error: Option<String>,
     pub share_info: Option<SharesResponse>,
     pub p2pool_share_info_error: Option<String>,
     pub peer_info: Option<Vec<PeerInfo>>,
@@ -155,6 +160,7 @@ impl App {
             p2pool_status_tab: 0,
             chain_info: None,
             p2pool_chain_info_error: None,
+            p2pool_service_error: None,
             share_info: None,
             p2pool_share_info_error: None,
             peer_info: None,
@@ -186,12 +192,14 @@ impl App {
 
     pub fn set_p2pool_config(&mut self, config: P2PoolConfig) {
         self.p2pool_config = Some(config);
+        self.p2pool_service_error = None;
         self.refresh_p2pool_clients_from_config();
         self.clear_p2pool_status_data();
     }
 
     pub fn clear_p2pool_config(&mut self) {
         self.p2pool_config = None;
+        self.p2pool_service_error = None;
         self.p2pool_client = P2PoolClient::new();
         self.p2pool_websocket_client = self.p2pool_client.websocket_client();
         self.clear_p2pool_status_data();
@@ -495,6 +503,159 @@ mod tests {
             app.bitcoin_chain_info_error.as_deref(),
             Some("second failure")
         );
+    }
+
+    #[test]
+    fn poll_p2pool_results_updates_success_and_failure_state() {
+        let mut app = App::new();
+        app.chain_info_tx
+            .send(Ok(ChainInfo {
+                genesis_blockhash: Some("genesis".to_string()),
+                chain_tip_height: Some(42),
+                total_work: "work".to_string(),
+                chain_tip_blockhash: Some("tip".to_string()),
+            }))
+            .unwrap();
+        app.share_info_tx
+            .send(Ok(SharesResponse {
+                from_height: 1,
+                to_height: 2,
+                shares: Vec::new(),
+            }))
+            .unwrap();
+        app.peer_info_tx
+            .send(Ok(vec![PeerInfo {
+                peer_id: "peer".to_string(),
+                status: Some("Connected".to_string()),
+            }]))
+            .unwrap();
+
+        app.poll_chain_info();
+        app.poll_share_info();
+        app.poll_peer_info();
+
+        assert_eq!(app.chain_info.as_ref().unwrap().chain_tip_height, Some(42));
+        assert_eq!(app.share_info.as_ref().unwrap().to_height, 2);
+        assert_eq!(app.peer_info.as_ref().unwrap().len(), 1);
+
+        app.chain_info_tx
+            .send(Err(anyhow::anyhow!("chain failed")))
+            .unwrap();
+        app.share_info_tx
+            .send(Err(anyhow::anyhow!("shares failed")))
+            .unwrap();
+        app.peer_info_tx
+            .send(Err(anyhow::anyhow!("peers failed")))
+            .unwrap();
+
+        app.poll_chain_info();
+        app.poll_share_info();
+        app.poll_peer_info();
+
+        assert!(app.chain_info.is_none());
+        assert_eq!(app.p2pool_chain_info_error.as_deref(), Some("chain failed"));
+        assert!(app.share_info.is_none());
+        assert_eq!(
+            app.p2pool_share_info_error.as_deref(),
+            Some("shares failed")
+        );
+        assert!(app.peer_info.is_none());
+        assert_eq!(app.p2pool_peer_info_error.as_deref(), Some("peers failed"));
+    }
+
+    #[test]
+    fn poll_live_events_updates_peers_and_records_share_and_errors() {
+        let mut app = App::new();
+        app.peer_info = Some(vec![PeerInfo {
+            peer_id: "peer-1".to_string(),
+            status: Some("Connected".to_string()),
+        }]);
+        app.p2pool_live_tx
+            .send(Ok(LiveP2PoolEvent::Peer(LivePeerEvent {
+                peer_id: "peer-1".to_string(),
+                status: "Syncing".to_string(),
+            })))
+            .unwrap();
+        app.p2pool_live_tx
+            .send(Ok(LiveP2PoolEvent::Peer(LivePeerEvent {
+                peer_id: "peer-2".to_string(),
+                status: "Connected".to_string(),
+            })))
+            .unwrap();
+        app.p2pool_live_tx
+            .send(Ok(LiveP2PoolEvent::Share(LiveShare {
+                blockhash: "share".to_string(),
+                prev_blockhash: "previous".to_string(),
+                height: 7,
+                miner_address: "miner".to_string(),
+                timestamp: 1,
+                bits: "1d00ffff".to_string(),
+                uncles: Vec::new(),
+            })))
+            .unwrap();
+
+        app.poll_live_p2pool_events();
+
+        assert_eq!(
+            app.peer_info.as_ref().unwrap()[0].status.as_deref(),
+            Some("Syncing")
+        );
+        assert_eq!(app.peer_info.as_ref().unwrap().len(), 2);
+        assert_eq!(app.live_shares.len(), 1);
+        assert_eq!(app.live_peer_events.len(), 2);
+        assert!(app.p2pool_live_error.is_none());
+
+        app.p2pool_live_tx
+            .send(Ok(LiveP2PoolEvent::Peer(LivePeerEvent {
+                peer_id: "peer-1".to_string(),
+                status: "DISCONNECTED".to_string(),
+            })))
+            .unwrap();
+        app.p2pool_live_tx
+            .send(Err(anyhow::anyhow!("stream failed")))
+            .unwrap();
+        app.p2pool_live_stream_started = true;
+
+        app.poll_live_shares();
+
+        assert_eq!(app.peer_info.as_ref().unwrap().len(), 1);
+        assert_eq!(app.peer_info.as_ref().unwrap()[0].peer_id, "peer-2");
+        assert_eq!(app.p2pool_live_error.as_deref(), Some("stream failed"));
+        assert!(!app.p2pool_live_stream_started);
+    }
+
+    #[test]
+    fn clear_p2pool_config_resets_clients_and_all_status_data() {
+        let mut app = App::new();
+        app.chain_info = Some(ChainInfo {
+            genesis_blockhash: None,
+            chain_tip_height: None,
+            total_work: "work".to_string(),
+            chain_tip_blockhash: None,
+        });
+        app.share_info = Some(SharesResponse {
+            from_height: 1,
+            to_height: 1,
+            shares: Vec::new(),
+        });
+        app.peer_info = Some(Vec::new());
+        app.live_shares.push(LiveShare {
+            blockhash: "share".to_string(),
+            prev_blockhash: "previous".to_string(),
+            height: 1,
+            miner_address: "miner".to_string(),
+            timestamp: 1,
+            bits: "1d00ffff".to_string(),
+            uncles: Vec::new(),
+        });
+        app.clear_p2pool_config();
+
+        assert!(app.p2pool_config.is_none());
+        assert!(app.chain_info.is_none());
+        assert!(app.share_info.is_none());
+        assert!(app.peer_info.is_none());
+        assert!(app.live_shares.is_empty());
+        assert!(!app.p2pool_live_stream_started);
     }
 
     #[test]
