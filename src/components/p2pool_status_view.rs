@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 use crate::app::{App, P2POOL_STATUS_TABS};
+use crate::p2poolv2_service::{P2PoolV2Service, format_size_bytes, instance_from_config_path};
 use ratatui::{
     prelude::*,
     widgets::{Block, Borders, Cell, Paragraph, Row, Table, Tabs, Wrap},
@@ -49,6 +50,8 @@ impl P2PoolStatusView {
             0 => Self::render_chain_info(f, app, outer[1]),
             1 => Self::render_share_info(f, app, outer[1]),
             2 => Self::render_peer_info(f, app, outer[1]),
+            3 => Self::render_storage_info(f, app, outer[1]),
+            4 => Self::render_system_info(f, app, outer[1]),
             _ => {}
         }
     }
@@ -205,6 +208,119 @@ impl P2PoolStatusView {
         f.render_widget(paragraph, area);
     }
 
+    fn render_storage_info(f: &mut Frame, app: &App, area: Rect) {
+        let mut text = vec![
+            Line::from(Span::styled(
+                "P2Poolv2 Storage",
+                Style::default().add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+        ];
+
+        if let Some(status) = &app.p2pool_storage_status {
+            if let Some(error) = &status.error {
+                text.push(Line::from(Span::styled(
+                    format!("Storage unavailable: {error}"),
+                    Style::default().fg(Color::Red),
+                )));
+            } else if let Some(path) = &status.path {
+                text.push(Line::from(format!("Store path      : {}", path.display())));
+                text.push(Line::from(""));
+                text.push(Line::from(format!(
+                    "Store size      : {}",
+                    status
+                        .size
+                        .map(format_size_bytes)
+                        .unwrap_or_else(|| "Store not created yet".to_string())
+                )));
+            } else {
+                text.push(Line::from(Span::styled(
+                    "Store path      : unavailable",
+                    Style::default().fg(Color::DarkGray),
+                )));
+                text.push(Line::from(""));
+                text.push(Line::from(Span::styled(
+                    "Store size      : unavailable",
+                    Style::default().fg(Color::DarkGray),
+                )));
+            }
+        } else if app.p2pool_config.is_none() {
+            text.push(Line::from(Span::styled(
+                "Store path      : unavailable",
+                Style::default().fg(Color::DarkGray),
+            )));
+            text.push(Line::from(""));
+            text.push(Line::from(Span::styled(
+                "Store size      : unavailable",
+                Style::default().fg(Color::DarkGray),
+            )));
+        } else {
+            text.push(Line::from(Span::styled(
+                "Loading storage info...",
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
+
+        let paragraph = Paragraph::new(text)
+            .block(Block::default().borders(Borders::ALL).title(" Storage "))
+            .wrap(Wrap { trim: true });
+
+        f.render_widget(paragraph, area);
+    }
+
+    fn render_system_info(f: &mut Frame, app: &App, area: Rect) {
+        if let Some(error) = &app.p2pool_service_error {
+            let paragraph = Paragraph::new(vec![
+                Line::from(Span::styled(
+                    "Service action failed",
+                    Style::default().fg(Color::Red),
+                )),
+                Line::from(""),
+                Line::from(error.as_str()),
+            ])
+            .block(Block::default().borders(Borders::ALL).title(" System "))
+            .wrap(Wrap { trim: true });
+
+            f.render_widget(paragraph, area);
+            return;
+        }
+
+        let text = if let Some(instance) = app
+            .p2pool_conf_path
+            .as_deref()
+            .and_then(instance_from_config_path)
+        {
+            let running = P2PoolV2Service::is_running(&instance).unwrap_or(false);
+            let status = if running {
+                Span::styled("Running", Style::default().fg(Color::Green))
+            } else {
+                Span::styled("Stopped", Style::default().fg(Color::Red))
+            };
+
+            vec![
+                Line::from(format!("Instance       : {instance}")),
+                Line::from(vec![Span::raw("Service Status : "), status]),
+                Line::from(""),
+                Line::from("[s] Start    [x] Stop    [r] Restart"),
+            ]
+        } else {
+            vec![
+                Line::from(Span::styled(
+                    "Service controls unavailable",
+                    Style::default().fg(Color::Yellow),
+                )),
+                Line::from(""),
+                Line::from("Select a config in the user config directory"),
+                Line::from("with a config-<instance>.toml filename."),
+            ]
+        };
+
+        let paragraph = Paragraph::new(text)
+            .block(Block::default().borders(Borders::ALL).title(" System "))
+            .wrap(Wrap { trim: true });
+
+        f.render_widget(paragraph, area);
+    }
     fn short_value(value: &str, max_len: usize) -> String {
         if value.len() <= max_len {
             return value.to_string();
@@ -453,6 +569,8 @@ mod tests {
 
     const SHARE_TAB: usize = 1;
     const PEER_TAB: usize = 2;
+    const STORAGE_TAB: usize = 3;
+    const SYSTEM_TAB: usize = 4;
 
     fn render_view(app: &App) -> String {
         let backend = TestBackend::new(100, 25);
@@ -613,6 +731,45 @@ mod tests {
         let output = render_view(&app);
 
         assert!(output.contains("Select a P2Poolv2 config file"));
+    }
+
+    #[test]
+    fn render_dispatches_storage_tab_and_shows_storage_header() {
+        let mut app = App::new();
+        app.p2pool_status_tab = STORAGE_TAB;
+
+        let output = render_view(&app);
+
+        assert!(output.contains("P2Poolv2 Storage"));
+        assert!(output.contains("Store path"));
+        assert!(output.contains("Store size"));
+    }
+
+    #[test]
+    fn render_dispatches_system_tab_and_explains_unavailable_controls() {
+        let mut app = App::new();
+        app.p2pool_status_tab = SYSTEM_TAB;
+
+        let output = render_view(&app);
+
+        assert!(output.contains("Service controls unavailable"));
+        assert!(output.contains("config-<instance>.toml"));
+    }
+
+    #[test]
+    fn render_system_tab_shows_service_action_error() {
+        let mut app = App::new();
+        app.p2pool_status_tab = SYSTEM_TAB;
+        app.p2pool_service_error = Some(
+            "Start failed: systemctl --user start p2poolv2@signet failed: connection refused"
+                .to_string(),
+        );
+
+        let output = render_view(&app);
+
+        assert!(output.contains("Service action failed"));
+        assert!(output.contains("connection refused"));
+        assert!(!output.contains("[s] Start"));
     }
 
     #[test]
