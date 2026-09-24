@@ -327,9 +327,7 @@ fn handle_action(action: AppAction, app: &mut App) -> Result<ControlFlow<()>> {
                                     should_save = false;
                                 }
                             },
-                            1 => app.settings.ln_conf_path = Some(path.clone()),
-                            2 => app.settings.shares_market_conf_path = Some(path.clone()),
-                            3 => app.settings.settings_dir_override = Some(path.clone()),
+                            1 => app.settings.settings_dir_override = Some(path.clone()),
                             _ => {}
                         }
                         if should_save {
@@ -356,9 +354,7 @@ fn handle_action(action: AppAction, app: &mut App) -> Result<ControlFlow<()>> {
                     app.p2pool_conf_path = None;
                     app.p2pool_config = None;
                 }
-                1 => app.settings.ln_conf_path = None,
-                2 => app.settings.shares_market_conf_path = None,
-                3 => app.settings.settings_dir_override = None,
+                1 => app.settings.settings_dir_override = None,
                 _ => {}
             }
             app.settings_view.save_error = None;
@@ -989,7 +985,7 @@ port = 46884
     #[test]
     fn open_explorer_for_settings_sets_state() {
         let mut app = App::new();
-        app.sidebar_index = 7;
+        app.sidebar_index = 4;
         app.toggle_menu();
 
         let flow = handle_action(AppAction::OpenExplorerForSettings(1), &mut app).unwrap();
@@ -1006,20 +1002,19 @@ port = 46884
 
         let dir = tempdir().unwrap();
         redirect_saves_to(&dir);
-        let path = dir.path().join("ln.conf");
-        std::fs::write(&path, "").unwrap();
+        let path = dir.path();
 
         let mut app = App::new();
-        app.explorer_trigger = Some(ExplorerTrigger::Settings(1)); // ln_conf_path
+        app.explorer_trigger = Some(ExplorerTrigger::Settings(1)); // settings_dir_override
 
-        run(AppAction::FileSelected(path.clone()), &mut app);
+        run(AppAction::FileSelected(path.to_path_buf()), &mut app);
 
-        assert_eq!(app.settings.ln_conf_path, Some(path));
+        assert_eq!(app.settings.settings_dir_override, Some(path.to_path_buf()));
         assert_eq!(app.current_screen, CurrentScreen::Settings);
         assert!(!app.settings_view.sidebar_focused);
     }
 
-    // Fix 13: Settings sidebar keyboard handler respects MAX_SIDEBAR_INDEX
+    // Settings sidebar keyboard handler respects MAX_SIDEBAR_INDEX
     #[test]
     fn settings_sidebar_down_nav_respects_max_sidebar_index() {
         let mut app = App::new();
@@ -1046,7 +1041,7 @@ port = 46884
         assert_eq!(app.sidebar_index, MAX_SIDEBAR_INDEX - 1);
     }
 
-    // Fix 14: bootstrap_from_settings with a valid P2Pool config path
+    // bootstrap_from_settings with a valid P2Pool config path
     #[test]
     fn bootstrap_from_settings_loads_p2pool_conf_path() {
         use tempfile::tempdir;
@@ -1084,24 +1079,6 @@ port = 46884
 
     #[test]
     #[serial]
-    fn file_selected_for_settings_field_2_shares_market_conf_path() {
-        use tempfile::tempdir;
-
-        let dir = tempdir().unwrap();
-        redirect_saves_to(&dir);
-        let path = dir.path().join("shares.conf");
-        std::fs::write(&path, "").unwrap();
-
-        let mut app = App::new();
-        app.explorer_trigger = Some(ExplorerTrigger::Settings(2));
-        run(AppAction::FileSelected(path.clone()), &mut app);
-
-        assert_eq!(app.settings.shares_market_conf_path, Some(path));
-        assert_eq!(app.current_screen, CurrentScreen::Settings);
-    }
-
-    #[test]
-    #[serial]
     fn file_selected_for_settings_wildcard_field_is_noop() {
         use tempfile::tempdir;
 
@@ -1116,15 +1093,13 @@ port = 46884
 
         // None of the settings fields must have been touched
         assert!(app.settings.p2pool_conf_path.is_none());
-        assert!(app.settings.ln_conf_path.is_none());
-        assert!(app.settings.shares_market_conf_path.is_none());
         assert!(app.settings.settings_dir_override.is_none());
         assert_eq!(app.current_screen, CurrentScreen::Settings);
     }
 
     #[test]
     #[serial]
-    fn file_selected_for_settings_field_3_sets_dir_override() {
+    fn file_selected_for_settings_field_1_sets_dir_override() {
         use tempfile::tempdir;
 
         let dir = tempdir().unwrap();
@@ -1133,7 +1108,7 @@ port = 46884
         let settings_dir = tempdir().unwrap();
 
         let mut app = App::new();
-        app.explorer_trigger = Some(ExplorerTrigger::Settings(3));
+        app.explorer_trigger = Some(ExplorerTrigger::Settings(1));
         run(
             AppAction::FileSelected(settings_dir.path().to_path_buf()),
             &mut app,
@@ -1150,9 +1125,9 @@ port = 46884
     }
 
     #[test]
-    fn open_explorer_for_settings_field3_enables_dir_select() {
+    fn open_explorer_for_settings_field1_enables_dir_select() {
         let mut app = App::new();
-        run(AppAction::OpenExplorerForSettings(3), &mut app);
+        run(AppAction::OpenExplorerForSettings(1), &mut app);
         assert!(app.explorer.allow_dir_select);
         assert_eq!(app.current_screen, CurrentScreen::FileExplorer);
     }
@@ -1170,7 +1145,7 @@ port = 46884
     fn close_modal_resets_allow_dir_select() {
         let mut app = App::new();
         app.explorer.allow_dir_select = true;
-        app.explorer_trigger = Some(ExplorerTrigger::Settings(3));
+        app.explorer_trigger = Some(ExplorerTrigger::Settings(1));
         app.current_screen = CurrentScreen::FileExplorer;
         app.sidebar_index = MAX_SIDEBAR_INDEX;
 
@@ -1180,12 +1155,12 @@ port = 46884
         assert!(app.explorer_trigger.is_none());
     }
 
-    // Fix 16: CloseModal clears the ExplorerTrigger when triggered from Settings
+    // CloseModal clears the ExplorerTrigger when triggered from Settings
     #[test]
     fn close_modal_clears_settings_explorer_trigger() {
         let mut app = App::new();
         app.sidebar_index = MAX_SIDEBAR_INDEX; // Settings
-        app.explorer_trigger = Some(ExplorerTrigger::Settings(2));
+        app.explorer_trigger = Some(ExplorerTrigger::Settings(1));
         app.current_screen = CurrentScreen::FileExplorer;
 
         run(AppAction::CloseModal, &mut app);
@@ -1207,8 +1182,7 @@ port = 46884
 
         let mut app = App::new();
         app.settings.p2pool_conf_path = Some(PathBuf::from("/tmp/p2pool.toml"));
-        app.settings.ln_conf_path = Some(PathBuf::from("/tmp/ln.conf"));
-        app.settings.shares_market_conf_path = Some(PathBuf::from("/tmp/shares.conf"));
+        app.settings.settings_dir_override = Some(PathBuf::from("/tmp/override"));
         app.p2pool_conf_path = Some(PathBuf::from("/tmp/p2pool.toml"));
 
         run(AppAction::ClearSettingsField(0), &mut app);
@@ -1217,10 +1191,7 @@ port = 46884
         assert!(app.p2pool_config.is_none());
 
         run(AppAction::ClearSettingsField(1), &mut app);
-        assert!(app.settings.ln_conf_path.is_none());
-
-        run(AppAction::ClearSettingsField(2), &mut app);
-        assert!(app.settings.shares_market_conf_path.is_none());
+        assert!(app.settings.settings_dir_override.is_none());
     }
 
     #[test]

@@ -6,9 +6,8 @@ use crate::app;
 use crate::app::{App, CurrentScreen};
 use crate::components::{
     bitcoin_status_view::BitcoinStatusView, file_explorer::FileExplorer, home_view::HomeView,
-    ln_config_view::LNConfigView, ln_status_view::LNStatusView,
     p2pool_config_view::P2PoolConfigView, p2pool_status_view::P2PoolStatusView,
-    settings_view::SettingsView, shares_market_view::SharesMarketView, status_bar::StatusBar,
+    settings_view::SettingsView, status_bar::StatusBar,
 };
 use ratatui::{
     prelude::*,
@@ -65,9 +64,6 @@ pub fn ui(f: &mut Frame, app: &mut App) {
         CurrentScreen::BitcoinStatus => BitcoinStatusView::render(f, app, main_area),
         CurrentScreen::P2PoolConfig => P2PoolConfigView::render(f, app, main_area),
         CurrentScreen::P2PoolStatus => P2PoolStatusView::render(f, app, main_area),
-        CurrentScreen::LNConfig => LNConfigView::render(f, app, main_area),
-        CurrentScreen::LNStatus => LNStatusView::render(f, app, main_area),
-        CurrentScreen::SharesMarket => SharesMarketView::render(f, app, main_area),
         CurrentScreen::FileExplorer => FileExplorer::render(f, app, main_area),
         CurrentScreen::Settings => SettingsView::render(f, app, main_area),
     }
@@ -136,42 +132,12 @@ mod tests {
     }
 
     #[test]
-    fn test_ln_config_screen_render() {
-        let mut terminal = make_terminal();
-        let mut app = App::new();
-        app.sidebar_index = 4;
-        app.toggle_menu();
-        terminal.draw(|f| ui(f, &mut app)).unwrap();
-        insta::assert_debug_snapshot!(terminal.backend());
-    }
-
-    #[test]
-    fn test_ln_status_screen_render() {
-        let mut terminal = make_terminal();
-        let mut app = App::new();
-        app.sidebar_index = 5;
-        app.toggle_menu();
-        terminal.draw(|f| ui(f, &mut app)).unwrap();
-        insta::assert_debug_snapshot!(terminal.backend());
-    }
-
-    #[test]
-    fn test_shares_market_screen_render() {
-        let mut terminal = make_terminal();
-        let mut app = App::new();
-        app.sidebar_index = 6;
-        app.toggle_menu();
-        terminal.draw(|f| ui(f, &mut app)).unwrap();
-        insta::assert_debug_snapshot!(terminal.backend());
-    }
-
-    #[test]
     #[serial_test::serial]
     fn test_settings_screen_render() {
         unsafe { std::env::set_var("PDM_CONFIG_DIR", "/pdm/test-config") };
         let mut terminal = make_terminal();
         let mut app = App::new();
-        app.sidebar_index = 7;
+        app.sidebar_index = 4;
         app.toggle_menu();
         terminal.draw(|f| ui(f, &mut app)).unwrap();
         unsafe { std::env::remove_var("PDM_CONFIG_DIR") };

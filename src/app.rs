@@ -21,9 +21,6 @@ pub const SIDEBAR_ITEMS: &[(&str, CurrentScreen)] = &[
     ("Bitcoin Status", CurrentScreen::BitcoinStatus),
     ("P2Pool Config", CurrentScreen::P2PoolConfig),
     ("P2Pool Status", CurrentScreen::P2PoolStatus),
-    ("LN Config", CurrentScreen::LNConfig),
-    ("LN Status", CurrentScreen::LNStatus),
-    ("Shares Market", CurrentScreen::SharesMarket),
     ("Settings", CurrentScreen::Settings),
 ];
 
@@ -45,9 +42,6 @@ pub enum CurrentScreen {
     BitcoinStatus,
     P2PoolConfig,
     P2PoolStatus,
-    LNConfig,
-    LNStatus,
-    SharesMarket,
     FileExplorer,
     Settings,
 }
