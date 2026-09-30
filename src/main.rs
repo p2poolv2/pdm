@@ -84,6 +84,7 @@ where
         app.poll_share_info();
         app.poll_peer_info();
         app.poll_storage_status();
+        app.poll_rss_bytes();
         app.poll_live_p2pool_events();
         app.poll_p2pool_running_status();
         terminal.draw(|f| ui::ui(f, app))?;

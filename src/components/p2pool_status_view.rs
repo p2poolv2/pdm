@@ -288,9 +288,15 @@ impl P2PoolStatusView {
                 None => Span::styled("Unknown", theme::MUTED),
             };
 
+            let rss_str = app
+                .p2pool_rss_bytes
+                .map(format_size_bytes)
+                .unwrap_or_else(|| "unavailable".to_string());
+
             vec![
                 Line::from(format!("Instance       : {instance}")),
                 Line::from(vec![Span::raw("Service Status : "), status]),
+                Line::from(format!("Memory (RSS)   : {rss_str}")),
                 Line::from(""),
                 Line::from("[s] Start    [x] Stop    [r] Restart"),
             ]
@@ -552,6 +558,7 @@ mod tests {
     use crate::components::p2pool_websocket::{LivePeerEvent, LiveShare};
     use crate::systemd::user_p2pool_config_dir;
     use ratatui::{Terminal, backend::TestBackend, prelude::Rect};
+    use std::path::PathBuf;
 
     const SHARE_TAB: usize = 1;
     const PEER_TAB: usize = 2;
@@ -1046,5 +1053,33 @@ mod tests {
             P2PoolStatusView::format_timestamp(1_700_000_000_000),
             "11/14/2023, 10:13:20 PM"
         );
+    }
+
+    #[test]
+    fn render_system_tab_shows_memory_rss_when_available() {
+        let mut app = App::new();
+        app.p2pool_status_tab = SYSTEM_TAB;
+        let config_dir = crate::p2poolv2_service::user_p2pool_config_dir().unwrap();
+        app.p2pool_conf_path = Some(config_dir.join("config-signet.toml"));
+        app.p2pool_rss_bytes = Some(157_286_400);
+
+        let output = render_view(&app);
+
+        assert!(output.contains("Instance       : signet"));
+        assert!(output.contains("Memory (RSS)   : 150.00 MB"));
+    }
+
+    #[test]
+    fn render_system_tab_shows_memory_rss_unavailable_when_none() {
+        let mut app = App::new();
+        app.p2pool_status_tab = SYSTEM_TAB;
+        let config_dir = crate::p2poolv2_service::user_p2pool_config_dir().unwrap();
+        app.p2pool_conf_path = Some(config_dir.join("config-signet.toml"));
+        app.p2pool_rss_bytes = None;
+
+        let output = render_view(&app);
+
+        assert!(output.contains("Instance       : signet"));
+        assert!(output.contains("Memory (RSS)   : unavailable"));
     }
 }

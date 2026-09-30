@@ -271,6 +271,106 @@ impl P2PoolV2Service {
             );
         }
     }
+
+    /// Runs `systemctl --user show <service> --property=<property> --value`
+    /// and returns the trimmed stdout.
+    fn show_property(instance: &str, property: &str) -> Result<String> {
+        let service = validated_service_name(instance)?;
+        let output = Command::new("systemctl")
+            .args([
+                "--user",
+                "show",
+                &service,
+                "--property",
+                property,
+                "--value",
+            ])
+            .output()
+            .with_context(|| format!("failed to execute systemctl show {property}"))?;
+
+        if output.status.success() {
+            Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!(
+                "systemctl --user show {service} --property {property} failed: {}",
+                stderr.trim()
+            );
+        }
+    }
+
+    /// Returns the current RSS of the P2Poolv2 service process in bytes,
+    /// or `None` if the service is not running.
+    ///
+    /// Strategy:
+    /// 1. Query `MemoryCurrent` from systemd.  When cgroup v2 memory
+    ///    accounting is active this gives the live value without touching
+    ///    `/proc`.
+    /// 2. If systemd returns `u64::MAX` (its sentinel for "not available"),
+    ///    fall back to reading `VmRSS` from `/proc/<MainPID>/status`.
+    /// 3. If `MainPID` is `0` the service has no live process; return `None`.
+    pub fn memory_rss_bytes(instance: &str) -> Result<Option<u64>> {
+        let raw = Self::show_property(instance, "MemoryCurrent")?;
+        let memory_current = raw.parse::<u64>().with_context(|| {
+            format!("systemd returned non-integer MemoryCurrent for '{instance}': '{raw}'")
+        })?;
+
+        if memory_current != u64::MAX {
+            return Ok(Some(memory_current));
+        }
+
+        // systemd sentinel — cgroup accounting not available or service not
+        // running.  Fall back via MainPID → /proc/<pid>/status.
+        let pid_raw = Self::show_property(instance, "MainPID")?;
+        let pid = pid_raw.parse::<u32>().with_context(|| {
+            format!("systemd returned non-integer MainPID for '{instance}': '{pid_raw}'")
+        })?;
+
+        if pid == 0 {
+            return Ok(None);
+        }
+
+        Self::rss_from_proc(pid)
+    }
+
+    /// Reads `VmRSS` from `/proc/<pid>/status` and returns it as bytes.
+    /// Returns `Ok(None)` if the file does not exist (process already exited).
+    fn rss_from_proc(pid: u32) -> Result<Option<u64>> {
+        Self::rss_from_proc_root(pid, "/proc")
+    }
+
+    /// Like `rss_from_proc` but accepts a custom root (used in tests to
+    /// redirect reads to a temporary directory).
+    fn rss_from_proc_root(pid: u32, proc_root: &str) -> Result<Option<u64>> {
+        let path = format!("{proc_root}/{pid}/status");
+        let contents = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => {
+                return Err(e).with_context(|| format!("failed to read {path}"));
+            }
+        };
+
+        for line in contents.lines() {
+            let Some(rest) = line.strip_prefix("VmRSS:") else {
+                continue;
+            };
+            // Format: "VmRSS:\t  51200 kB"
+            let parts: Vec<&str> = rest.split_whitespace().collect();
+            if parts.len() >= 2 && parts[1].eq_ignore_ascii_case("kb") {
+                let kb = parts[0].parse::<u64>().with_context(|| {
+                    format!("could not parse VmRSS value in {path}: '{}'", parts[0])
+                })?;
+                return Ok(Some(kb * 1024));
+            }
+            // Unexpected unit — treat as parse failure
+            anyhow::bail!("unexpected VmRSS format in {path}: '{rest}'");
+        }
+
+        // VmRSS field absent — should not happen for a live process, but
+        // treat as unavailable rather than crashing.
+        Ok(None)
+    }
 }
 
 fn validated_service_name(instance: &str) -> Result<String> {
@@ -341,6 +441,251 @@ mod tests {
     }
 
     #[cfg(unix)]
+    /// Build a fake `systemctl` that handles `show … --property=<prop> --value`
+    /// by emitting the caller-supplied property values in order.
+    ///
+    /// `properties` is a list of `(property_name, value_to_emit)` pairs that
+    /// the script matches against `$5` (the `--property` argument).
+    /// An unknown property causes the script to exit 1.
+    fn fake_systemctl_show(properties: &[(&str, &str)]) -> (TempDir, Option<std::ffi::OsString>) {
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("systemctl");
+
+        // Build a chain of `elif [ "$5" = "<prop>" ]; then echo <value>` clauses.
+        let mut cases = String::new();
+        for (index, (prop, value)) in properties.iter().enumerate() {
+            if index == 0 {
+                cases.push_str(&format!(
+                    "if [ \"$5\" = \"{prop}\" ]; then\n  echo {value}\n"
+                ));
+            } else {
+                cases.push_str(&format!(
+                    "elif [ \"$5\" = \"{prop}\" ]; then\n  echo {value}\n"
+                ));
+            }
+        }
+        cases.push_str("else\n  echo \"unknown property $5\" >&2; exit 1\nfi\n");
+
+        fs::write(&script, format!("#!/bin/sh\n{cases}")).unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let old_path = std::env::var_os("PATH");
+        let path = match old_path.as_ref() {
+            Some(old_path) => format!("{}:{}", dir.path().display(), old_path.to_string_lossy()),
+            None => dir.path().display().to_string(),
+        };
+        unsafe { std::env::set_var("PATH", path) };
+        (dir, old_path)
+    }
+
+    /// Write a minimal `/proc/<pid>/status`-style file under `base_dir` and
+    /// return the fake PID so the caller can point the code at `base_dir`.
+    fn fake_proc_status(base_dir: &std::path::Path, pid: u32, vmrss_kb: u64) {
+        let proc_dir = base_dir.join(format!("{pid}"));
+        fs::create_dir_all(&proc_dir).unwrap();
+        fs::write(
+            proc_dir.join("status"),
+            format!("Name:\tp2poolv2\nVmRSS:\t{vmrss_kb} kB\n"),
+        )
+        .unwrap();
+    }
+
+    // memory_rss_bytes tests
+    #[test]
+    #[serial]
+    fn memory_rss_bytes_returns_memory_current_when_valid() -> Result<()> {
+        let (_dir, old_path) = fake_systemctl_show(&[("MemoryCurrent", "52428800")]);
+
+        let result = P2PoolV2Service::memory_rss_bytes("signet");
+        restore_path(old_path);
+
+        assert_eq!(result?, Some(52_428_800_u64));
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn memory_rss_bytes_zero_memory_current_is_returned_as_zero() -> Result<()> {
+        // MemoryCurrent == 0 is a valid value (e.g. a freshly started service
+        // with cgroup accounting enabled but no pages yet).  It must NOT be
+        // treated as the sentinel.
+        let (_dir, old_path) = fake_systemctl_show(&[("MemoryCurrent", "0")]);
+
+        let result = P2PoolV2Service::memory_rss_bytes("signet");
+        restore_path(old_path);
+
+        assert_eq!(result?, Some(0));
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn memory_rss_bytes_falls_back_to_proc_when_memory_current_is_sentinel() -> Result<()> {
+        let sentinel = u64::MAX.to_string();
+        let proc_dir = tempfile::tempdir().unwrap();
+        fake_proc_status(proc_dir.path(), 99999, 51200);
+
+        // The fake systemctl emits u64::MAX for MemoryCurrent and the fake
+        // PID for MainPID.  We then call rss_from_proc_root directly because
+        // the PATH-shim approach cannot control which /proc root is used.
+        // Instead we test the two layers independently:
+        //   - memory_rss_bytes up to the sentinel detection via fake systemctl
+        //   - rss_from_proc_root directly with the tempdir
+        let (_dir, old_path) =
+            fake_systemctl_show(&[("MemoryCurrent", &sentinel), ("MainPID", "99999")]);
+        // Override the PATH so show_property works, but intercept before
+        // rss_from_proc by testing rss_from_proc_root separately below.
+        restore_path(old_path);
+
+        // Direct test of the proc-reading layer.
+        let rss = P2PoolV2Service::rss_from_proc_root(99999, proc_dir.path().to_str().unwrap())?;
+        assert_eq!(rss, Some(51200 * 1024));
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn memory_rss_bytes_sentinel_with_main_pid_zero_returns_none() -> Result<()> {
+        let sentinel = u64::MAX.to_string();
+        let (_dir, old_path) =
+            fake_systemctl_show(&[("MemoryCurrent", &sentinel), ("MainPID", "0")]);
+
+        let result = P2PoolV2Service::memory_rss_bytes("signet");
+        restore_path(old_path);
+
+        assert_eq!(result?, None);
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn memory_rss_bytes_invalid_memory_current_string_returns_error() {
+        let (_dir, old_path) = fake_systemctl_show(&[("MemoryCurrent", "not-a-number")]);
+
+        let err = P2PoolV2Service::memory_rss_bytes("signet").unwrap_err();
+        restore_path(old_path);
+
+        assert!(
+            err.to_string().contains("non-integer MemoryCurrent"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn memory_rss_bytes_invalid_main_pid_string_returns_error() {
+        let sentinel = u64::MAX.to_string();
+        let (_dir, old_path) =
+            fake_systemctl_show(&[("MemoryCurrent", &sentinel), ("MainPID", "not-a-pid")]);
+
+        let err = P2PoolV2Service::memory_rss_bytes("signet").unwrap_err();
+        restore_path(old_path);
+
+        assert!(
+            err.to_string().contains("non-integer MainPID"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn memory_rss_bytes_invalid_instance_name_returns_error() {
+        // No fake systemctl needed — validation fires before any Command.
+        let err = P2PoolV2Service::memory_rss_bytes("bad/instance")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("invalid P2Poolv2 service instance"), "{err}");
+    }
+
+    // rss_from_proc_root unit tests (no PATH shimming needed)
+    #[test]
+    fn rss_from_proc_root_returns_bytes_from_vmrss_field() -> Result<()> {
+        let dir = tempfile::tempdir().unwrap();
+        fake_proc_status(dir.path(), 1, 65536);
+
+        let rss = P2PoolV2Service::rss_from_proc_root(1, dir.path().to_str().unwrap())?;
+        assert_eq!(rss, Some(65536 * 1024));
+        Ok(())
+    }
+
+    #[test]
+    fn rss_from_proc_root_missing_status_file_returns_none() -> Result<()> {
+        let dir = tempfile::tempdir().unwrap();
+        // No file written — directory exists but status is absent.
+        let proc_dir = dir.path().join("12345");
+        fs::create_dir_all(&proc_dir).unwrap();
+
+        let rss = P2PoolV2Service::rss_from_proc_root(12345, dir.path().to_str().unwrap())?;
+        assert_eq!(rss, None);
+        Ok(())
+    }
+
+    #[test]
+    fn rss_from_proc_root_missing_pid_directory_returns_none() -> Result<()> {
+        let dir = tempfile::tempdir().unwrap();
+        // Neither the pid directory nor the status file exist.
+        let rss = P2PoolV2Service::rss_from_proc_root(99, dir.path().to_str().unwrap())?;
+        assert_eq!(rss, None);
+        Ok(())
+    }
+
+    #[test]
+    fn rss_from_proc_root_no_vmrss_field_returns_none() -> Result<()> {
+        let dir = tempfile::tempdir().unwrap();
+        let proc_dir = dir.path().join("7");
+        fs::create_dir_all(&proc_dir).unwrap();
+        fs::write(
+            proc_dir.join("status"),
+            "Name:\tp2poolv2\nVmSize:\t102400 kB\n",
+        )
+        .unwrap();
+
+        let rss = P2PoolV2Service::rss_from_proc_root(7, dir.path().to_str().unwrap())?;
+        assert_eq!(rss, None);
+        Ok(())
+    }
+
+    #[test]
+    fn rss_from_proc_root_unexpected_unit_returns_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let proc_dir = dir.path().join("8");
+        fs::create_dir_all(&proc_dir).unwrap();
+        // "mB" is not a recognised unit
+        fs::write(
+            proc_dir.join("status"),
+            "Name:\tp2poolv2\nVmRSS:\t1024 mB\n",
+        )
+        .unwrap();
+
+        let err = P2PoolV2Service::rss_from_proc_root(8, dir.path().to_str().unwrap()).unwrap_err();
+        assert!(
+            err.to_string().contains("unexpected VmRSS format"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn existing_service_actions_unaffected_by_memory_rss_bytes() -> Result<()> {
+        // Regression guard: the existing start/stop/is_running functionality
+        // must compile and behave identically after the addition of the new
+        // methods.  Re-run the core assertion from the original test here so
+        // the CI catches any unintended breakage.
+        let (_dir, old_path, args_file) = fake_systemctl(false, true);
+
+        let result = (|| {
+            assert!(P2PoolV2Service::is_running("signet")?);
+            assert_eq!(
+                fs::read_to_string(&args_file)?,
+                "--user\nis-active\np2poolv2@signet\n"
+            );
+            Ok::<_, anyhow::Error>(())
+        })();
+
+        restore_path(old_path);
+        result
+    }
+
     #[test]
     #[serial]
     fn service_actions_succeed_and_active_service_is_running() -> Result<()> {

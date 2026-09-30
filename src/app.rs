@@ -12,7 +12,7 @@ use crate::components::p2pool_websocket::{
 use crate::components::settings_view::SettingsView;
 use crate::settings::{self, Settings};
 use crate::systemd::{P2PoolV2Service, ServiceAction, instance_from_config_path};
-use crate::p2poolv2_service::{StorePathError, calculate_path_size, resolve_store_path};
+use crate::p2poolv2_service::{StorePathError, calculate_path_size, resolve_store_path, resolve_store_path};
 use p2poolv2_config::Config as P2PoolConfig;
 use std::path::PathBuf;
 use tokio::sync::mpsc;
@@ -116,6 +116,9 @@ pub struct App {
     pub p2pool_chain_info_error: Option<String>,
     pub p2pool_service_error: Option<String>,
     pub p2pool_storage_status: Option<P2PoolStorageStatus>,
+    /// Current RSS of the P2Poolv2 service process in bytes, or `None` when
+    /// the service is not running or the value is not yet available.
+    pub p2pool_rss_bytes: Option<u64>,
     pub share_info: Option<SharesResponse>,
     pub p2pool_share_info_error: Option<String>,
     pub peer_info: Option<Vec<PeerInfo>>,
@@ -145,6 +148,8 @@ pub struct App {
     pub peer_info_rx: mpsc::UnboundedReceiver<anyhow::Result<Vec<PeerInfo>>>,
     pub p2pool_storage_tx: mpsc::UnboundedSender<anyhow::Result<P2PoolStorageStatus>>,
     pub p2pool_storage_rx: mpsc::UnboundedReceiver<anyhow::Result<P2PoolStorageStatus>>,
+    pub p2pool_rss_tx: mpsc::UnboundedSender<anyhow::Result<Option<u64>>>,
+    pub p2pool_rss_rx: mpsc::UnboundedReceiver<anyhow::Result<Option<u64>>>,
 }
 
 impl App {
@@ -155,6 +160,7 @@ impl App {
         let (peer_info_tx, peer_info_rx) = mpsc::unbounded_channel();
         let (share_info_tx, share_info_rx) = mpsc::unbounded_channel();
         let (p2pool_storage_tx, p2pool_storage_rx) = mpsc::unbounded_channel();
+        let (p2pool_rss_tx, p2pool_rss_rx) = mpsc::unbounded_channel();
         let (p2pool_live_tx, p2pool_live_rx) = mpsc::unbounded_channel();
         let (p2pool_running_status_tx, p2pool_running_status_rx) = mpsc::unbounded_channel();
         let p2pool_client = P2PoolClient::new();
@@ -182,6 +188,7 @@ impl App {
             p2pool_chain_info_error: None,
             p2pool_service_error: None,
             p2pool_storage_status: None,
+            p2pool_rss_bytes: None,
             share_info: None,
             p2pool_share_info_error: None,
             peer_info: None,
@@ -206,6 +213,8 @@ impl App {
             peer_info_rx,
             p2pool_storage_tx,
             p2pool_storage_rx,
+            p2pool_rss_tx,
+            p2pool_rss_rx,
         }
     }
 
@@ -261,6 +270,7 @@ impl App {
         self.peer_info = None;
         self.p2pool_peer_info_error = None;
         self.p2pool_storage_status = None;
+        self.p2pool_rss_bytes = None;
         self.live_shares.clear();
         self.live_peer_events.clear();
         self.p2pool_live_error = None;
@@ -343,6 +353,16 @@ impl App {
                     });
                 }
             }
+        }
+    }
+
+    /// Drains any pending RSS results from the background polling task.
+    pub fn poll_rss_bytes(&mut self) {
+        while let Ok(result) = self.p2pool_rss_rx.try_recv() {
+            self.p2pool_rss_bytes = match result {
+                Ok(bytes) => bytes,
+                Err(_) => None,
+            };
         }
     }
 
@@ -464,6 +484,11 @@ impl App {
                 let storage_tx = self.p2pool_storage_tx.clone();
                 let storage_config = self.p2pool_config.clone();
                 let storage_conf_path = self.p2pool_conf_path.clone();
+                let rss_tx = self.p2pool_rss_tx.clone();
+                let rss_instance = self
+                    .p2pool_conf_path
+                    .as_deref()
+                    .and_then(instance_from_config_path);
 
                 if let Ok(handle) = tokio::runtime::Handle::try_current() {
                     handle.spawn(async move {
@@ -533,7 +558,23 @@ impl App {
                         self.live_stream_task = Some(task);
                     }
 
-                    self.refresh_p2pool_running_status();
+                    // Spawn a looping task that polls memory RSS every 2 s.
+                    // Only runs when the config path maps to a managed instance.
+                    // The loop exits automatically when the receiver (App) is
+                    // dropped or replaced — a failed send signals closure.
+                    if let Some(instance) = rss_instance {
+                        handle.spawn(async move {
+                            let mut interval =
+                                tokio::time::interval(std::time::Duration::from_secs(2));
+                            loop {
+                                interval.tick().await;
+                                let result = P2PoolV2Service::memory_rss_bytes(&instance);
+                                if rss_tx.send(result).is_err() {
+                                    break;
+                                }
+                            }
+                        });
+                    }
                 }
             }
         }
@@ -924,5 +965,43 @@ mod tests {
         let err = app.resolve_store_path().unwrap_err();
         assert_eq!(err, StorePathError::ConfigMissing);
         assert_eq!(err.to_string(), "No P2Pool config loaded");
+    }
+
+    #[test]
+    fn poll_rss_bytes_stores_valid_byte_count() {
+        let mut app = App::new();
+        app.p2pool_rss_tx.send(Ok(Some(52_428_800))).unwrap();
+
+        app.poll_rss_bytes();
+
+        assert_eq!(app.p2pool_rss_bytes, Some(52_428_800));
+    }
+
+    #[test]
+    fn poll_rss_bytes_error_result_sets_none() {
+        let mut app = App::new();
+        app.p2pool_rss_bytes = Some(12345);
+        app.p2pool_rss_tx
+            .send(Err(anyhow::anyhow!("systemctl failed")))
+            .unwrap();
+
+        app.poll_rss_bytes();
+
+        assert_eq!(app.p2pool_rss_bytes, None);
+    }
+
+    #[test]
+    fn poll_rss_bytes_drains_to_last_value() {
+        let mut app = App::new();
+        // Queue two updates: a valid value then an error.
+        app.p2pool_rss_tx.send(Ok(Some(1024))).unwrap();
+        app.p2pool_rss_tx
+            .send(Err(anyhow::anyhow!("gone")))
+            .unwrap();
+
+        app.poll_rss_bytes();
+
+        // The last message wins — error clears to None.
+        assert_eq!(app.p2pool_rss_bytes, None);
     }
 }
