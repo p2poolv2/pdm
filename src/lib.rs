@@ -5,5 +5,6 @@
 pub mod app;
 pub mod components;
 pub mod p2poolv2_config;
+pub mod p2poolv2_service;
 pub mod settings;
 pub mod ui;
