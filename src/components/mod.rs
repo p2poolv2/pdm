@@ -6,6 +6,7 @@ pub mod bitcoin_client;
 pub mod bitcoin_status_view;
 pub mod file_explorer;
 pub mod home_view;
+pub mod monitoring_view;
 pub mod p2pool_client;
 pub mod p2pool_config_view;
 pub mod p2pool_status_view;

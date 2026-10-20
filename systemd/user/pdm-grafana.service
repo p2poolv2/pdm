@@ -1,0 +1,43 @@
+# Managed by PDM. Changes may be updated by PDM.
+[Unit]
+Description=PDM Grafana dashboards
+Wants=pdm-prometheus.service
+After=pdm-prometheus.service
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+StateDirectory=pdm/grafana
+StateDirectoryMode=0750
+Environment="GF_PATHS_CONFIG=@GRAFANA_CONFIG@"
+Environment=GF_PATHS_DATA=%S/pdm/grafana
+Environment=GF_PATHS_LOGS=%S/pdm/grafana/logs
+Environment=GF_PATHS_PLUGINS=%S/pdm/grafana/plugins
+Environment=GF_SERVER_HTTP_ADDR=127.0.0.1
+Environment=GF_SERVER_HTTP_PORT=3000
+Environment="GF_PATHS_PROVISIONING=@PDM_CONFIG_DIR@/monitoring/grafana/provisioning"
+Environment="GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=@PDM_CONFIG_DIR@/monitoring/grafana/dashboards/pool.json"
+EnvironmentFile=@PDM_CONFIG_DIR_PATH@/monitoring/grafana/admin.env
+Environment=GF_USERS_ALLOW_SIGN_UP=false
+Environment=GF_AUTH_ANONYMOUS_ENABLED=false
+# @GRAFANA_HOME_DIRECTIVES@
+ExecStart=grafana server
+Restart=on-failure
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=pdm-grafana
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+ReadWritePaths=%S/pdm/grafana
+
+[Install]
+WantedBy=default.target

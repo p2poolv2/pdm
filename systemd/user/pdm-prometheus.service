@@ -1,0 +1,31 @@
+# Managed by PDM. Changes may be updated by PDM.
+[Unit]
+Description=PDM Prometheus metrics service
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+StateDirectory=pdm/prometheus
+StateDirectoryMode=0750
+ExecStart=prometheus --config.file="@PDM_CONFIG_DIR@/monitoring/prometheus.yml" --storage.tsdb.path=%S/pdm/prometheus --web.listen-address=127.0.0.1:9090
+Restart=on-failure
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=pdm-prometheus
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+ReadWritePaths=%S/pdm/prometheus
+
+[Install]
+WantedBy=default.target

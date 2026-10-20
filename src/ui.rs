@@ -6,8 +6,8 @@ use crate::app;
 use crate::app::{App, CurrentScreen};
 use crate::components::{
     bitcoin_status_view::BitcoinStatusView, file_explorer::FileExplorer, home_view::HomeView,
-    p2pool_config_view::P2PoolConfigView, p2pool_status_view::P2PoolStatusView,
-    settings_view::SettingsView, status_bar::StatusBar,
+    monitoring_view::MonitoringView, p2pool_config_view::P2PoolConfigView,
+    p2pool_status_view::P2PoolStatusView, settings_view::SettingsView, status_bar::StatusBar,
 };
 use ratatui::{
     prelude::*,
@@ -65,6 +65,7 @@ pub fn ui(f: &mut Frame, app: &mut App) {
         CurrentScreen::P2PoolConfig => P2PoolConfigView::render(f, app, main_area),
         CurrentScreen::P2PoolStatus => P2PoolStatusView::render(f, app, main_area),
         CurrentScreen::FileExplorer => FileExplorer::render(f, app, main_area),
+        CurrentScreen::Monitoring => MonitoringView::render(f, app, main_area),
         CurrentScreen::Settings => SettingsView::render(f, app, main_area),
     }
 
@@ -133,11 +134,33 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn test_settings_screen_render() {
+    fn test_monitoring_screen_render() {
         unsafe { std::env::set_var("PDM_CONFIG_DIR", "/pdm/test-config") };
         let mut terminal = make_terminal();
         let mut app = App::new();
         app.sidebar_index = 4;
+        app.toggle_menu();
+        terminal.draw(|f| ui(f, &mut app)).unwrap();
+        unsafe { std::env::remove_var("PDM_CONFIG_DIR") };
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<Vec<_>>()
+            .join("");
+        assert!(rendered.contains("Monitoring — Prometheus and Grafana Configuration"));
+        assert!(rendered.contains("Optional — Native systemd user services"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_settings_screen_render() {
+        unsafe { std::env::set_var("PDM_CONFIG_DIR", "/pdm/test-config") };
+        let mut terminal = make_terminal();
+        let mut app = App::new();
+        app.sidebar_index = 5;
         app.toggle_menu();
         terminal.draw(|f| ui(f, &mut app)).unwrap();
         unsafe { std::env::remove_var("PDM_CONFIG_DIR") };

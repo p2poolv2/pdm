@@ -9,6 +9,7 @@ use pdm::app::{
 };
 use pdm::components::settings_view::{FIELDS, FieldKind};
 use pdm::p2poolv2_config::{apply_edit as apply_p2pool_edit, flatten_config};
+use pdm::p2poolv2_service::{P2PoolV2Service, instance_from_config_path};
 use pdm::settings::{load_settings, save_settings};
 use pdm::ui;
 use std::ops::ControlFlow;
@@ -82,6 +83,8 @@ where
         app.poll_chain_info();
         app.poll_share_info();
         app.poll_peer_info();
+        app.poll_storage_status();
+        app.poll_rss_bytes();
         app.poll_live_p2pool_events();
         terminal.draw(|f| ui::ui(f, app))?;
 
@@ -151,6 +154,42 @@ fn dispatch_key(key: event::KeyEvent, app: &mut App) -> KeyOutcome {
                 }
                 AppAction::None
             }
+            KeyCode::Char('s') if app.p2pool_status_tab == 4 => {
+                if app
+                    .p2pool_conf_path
+                    .as_deref()
+                    .and_then(instance_from_config_path)
+                    .is_some()
+                {
+                    AppAction::StartP2Pool
+                } else {
+                    AppAction::None
+                }
+            }
+            KeyCode::Char('x') if app.p2pool_status_tab == 4 => {
+                if app
+                    .p2pool_conf_path
+                    .as_deref()
+                    .and_then(instance_from_config_path)
+                    .is_some()
+                {
+                    AppAction::StopP2Pool
+                } else {
+                    AppAction::None
+                }
+            }
+            KeyCode::Char('r') if app.p2pool_status_tab == 4 => {
+                if app
+                    .p2pool_conf_path
+                    .as_deref()
+                    .and_then(instance_from_config_path)
+                    .is_some()
+                {
+                    AppAction::RestartP2Pool
+                } else {
+                    AppAction::None
+                }
+            }
             k => sidebar_nav(k, app),
         },
 
@@ -183,6 +222,11 @@ fn dispatch_key(key: event::KeyEvent, app: &mut App) -> KeyOutcome {
                 }
             }
         }
+
+        CurrentScreen::Monitoring => match key.code {
+            KeyCode::Char(_) => app.monitoring_view.handle_input(key),
+            k => sidebar_nav(k, app),
+        },
 
         CurrentScreen::Settings => {
             if app.settings_view.sidebar_focused {
@@ -393,10 +437,142 @@ fn handle_action(action: AppAction, app: &mut App) -> Result<ControlFlow<()>> {
             }
         }
 
+        AppAction::StartP2Pool => {
+            app.p2pool_service_error = None;
+            if let Some(instance) = app
+                .p2pool_conf_path
+                .as_deref()
+                .and_then(instance_from_config_path)
+            {
+                if let Err(error) = P2PoolV2Service::start(&instance) {
+                    app.p2pool_service_error = Some(format!("Start failed: {error}"));
+                }
+            }
+        }
+        AppAction::StopP2Pool => {
+            app.p2pool_service_error = None;
+            if let Some(instance) = app
+                .p2pool_conf_path
+                .as_deref()
+                .and_then(instance_from_config_path)
+            {
+                if let Err(error) = P2PoolV2Service::stop(&instance) {
+                    app.p2pool_service_error = Some(format!("Stop failed: {error}"));
+                }
+            }
+        }
+        AppAction::RestartP2Pool => {
+            app.p2pool_service_error = None;
+            if let Some(instance) = app
+                .p2pool_conf_path
+                .as_deref()
+                .and_then(instance_from_config_path)
+            {
+                if let Err(error) = P2PoolV2Service::restart(&instance) {
+                    app.p2pool_service_error = Some(format!("Restart failed: {error}"));
+                }
+            }
+        }
+
+        AppAction::GenerateMonitoringConfigs => {
+            app.monitoring_view.service_error = None;
+            if let Some(cfg) = app.p2pool_config.as_ref() {
+                let result =
+                    pdm::monitoring::write_monitoring_configs(cfg).map_err(|e| format!("{e:#}"));
+                app.monitoring_view.last_result = Some(result);
+            } else {
+                app.monitoring_view.service_error = Some(
+                    "Load a P2Pool configuration before generating monitoring config.".to_string(),
+                );
+            }
+        }
+
+        AppAction::StartMonitoringPrometheus => run_monitoring_action(
+            app,
+            pdm::p2poolv2_service::MonitoringService::Prometheus,
+            "start",
+        ),
+        AppAction::StopMonitoringPrometheus => run_monitoring_action(
+            app,
+            pdm::p2poolv2_service::MonitoringService::Prometheus,
+            "stop",
+        ),
+        AppAction::RestartMonitoringPrometheus => run_monitoring_action(
+            app,
+            pdm::p2poolv2_service::MonitoringService::Prometheus,
+            "restart",
+        ),
+        AppAction::StartMonitoringGrafana => run_monitoring_action(
+            app,
+            pdm::p2poolv2_service::MonitoringService::Grafana,
+            "start",
+        ),
+        AppAction::StopMonitoringGrafana => run_monitoring_action(
+            app,
+            pdm::p2poolv2_service::MonitoringService::Grafana,
+            "stop",
+        ),
+        AppAction::RestartMonitoringGrafana => run_monitoring_action(
+            app,
+            pdm::p2poolv2_service::MonitoringService::Grafana,
+            "restart",
+        ),
+        AppAction::RefreshMonitoringStatus => {
+            app.monitoring_view.service_error = refresh_monitoring_status(app);
+        }
+
         AppAction::None => {}
     }
 
     Ok(ControlFlow::Continue(()))
+}
+
+fn run_monitoring_action(
+    app: &mut App,
+    service: pdm::p2poolv2_service::MonitoringService,
+    action: &str,
+) {
+    use pdm::p2poolv2_service::MonitoringServices;
+    app.monitoring_view.service_error = None;
+    let result = match action {
+        "start" => MonitoringServices::start(service),
+        "stop" => MonitoringServices::stop(service),
+        _ => MonitoringServices::restart(service),
+    };
+    let action_error = result.err().map(|error| {
+        format!(
+            "{} {action} failed: {error:#}",
+            match service {
+                pdm::p2poolv2_service::MonitoringService::Prometheus => "Prometheus",
+                pdm::p2poolv2_service::MonitoringService::Grafana => "Grafana",
+            }
+        )
+    });
+    let status_error = refresh_monitoring_status(app);
+    app.monitoring_view.service_error = match (action_error, status_error) {
+        (Some(action), Some(status)) => Some(format!("{action}; {status}")),
+        (Some(error), None) | (None, Some(error)) => Some(error),
+        (None, None) => None,
+    };
+}
+
+fn refresh_monitoring_status(app: &mut App) -> Option<String> {
+    use pdm::p2poolv2_service::{MonitoringService, MonitoringServices};
+    app.monitoring_view.service_status = None;
+    match (
+        MonitoringServices::status(MonitoringService::Prometheus),
+        MonitoringServices::status(MonitoringService::Grafana),
+    ) {
+        (Ok(prometheus), Ok(grafana)) => {
+            app.monitoring_view.service_status = Some((prometheus, grafana));
+            None
+        }
+        (prometheus, grafana) => Some(format!(
+            "Status refresh failed — Prometheus: {}; Grafana: {}",
+            prometheus.unwrap_or_else(|e| e.to_string()),
+            grafana.unwrap_or_else(|e| e.to_string())
+        )),
+    }
 }
 
 /// Matches the TOML type of an existing item and parses the new string
@@ -698,6 +874,64 @@ port = 46884
     }
 
     #[test]
+    fn dispatch_key_monitoring_service_shortcuts_reach_both_services() {
+        let mut app = App::new();
+        app.current_screen = CurrentScreen::Monitoring;
+
+        assert!(matches!(
+            dispatch_key(press(KeyCode::Char('g')), &mut app),
+            KeyOutcome::Action(AppAction::GenerateMonitoringConfigs)
+        ));
+        assert!(matches!(
+            dispatch_key(press(KeyCode::Char('s')), &mut app),
+            KeyOutcome::Action(AppAction::StartMonitoringPrometheus)
+        ));
+        assert!(matches!(
+            dispatch_key(press(KeyCode::Char('x')), &mut app),
+            KeyOutcome::Action(AppAction::StopMonitoringPrometheus)
+        ));
+        assert!(matches!(
+            dispatch_key(press(KeyCode::Char('r')), &mut app),
+            KeyOutcome::Action(AppAction::RestartMonitoringPrometheus)
+        ));
+        assert!(matches!(
+            dispatch_key(press(KeyCode::Char('S')), &mut app),
+            KeyOutcome::Action(AppAction::StartMonitoringGrafana)
+        ));
+        assert!(matches!(
+            dispatch_key(press(KeyCode::Char('X')), &mut app),
+            KeyOutcome::Action(AppAction::StopMonitoringGrafana)
+        ));
+        assert!(matches!(
+            dispatch_key(press(KeyCode::Char('R')), &mut app),
+            KeyOutcome::Action(AppAction::RestartMonitoringGrafana)
+        ));
+        assert!(matches!(
+            dispatch_key(press(KeyCode::Char('t')), &mut app),
+            KeyOutcome::Action(AppAction::RefreshMonitoringStatus)
+        ));
+        assert!(matches!(
+            dispatch_key(
+                press_with(KeyCode::Char('s'), KeyModifiers::SHIFT),
+                &mut app
+            ),
+            KeyOutcome::Action(AppAction::StartMonitoringGrafana)
+        ));
+    }
+
+    #[test]
+    fn generating_monitoring_config_without_p2pool_config_reports_error() {
+        let mut app = App::new();
+        run(AppAction::GenerateMonitoringConfigs, &mut app);
+        assert!(
+            app.monitoring_view
+                .service_error
+                .as_ref()
+                .is_some_and(|error| error.contains("Load a P2Pool configuration"))
+        );
+    }
+
+    #[test]
     fn dispatch_key_bitcoin_status_left_decrements_above_zero() {
         let mut app = App::new();
         app.current_screen = CurrentScreen::BitcoinStatus;
@@ -795,6 +1029,61 @@ port = 46884
         dispatch_key(press(KeyCode::Right), &mut app);
 
         assert_eq!(app.p2pool_status_tab, MAX_P2POOL_STATUS_TAB);
+    }
+
+    #[test]
+    fn dispatch_key_p2pool_system_tab_without_config_ignores_service_controls() {
+        let mut app = App::new();
+        app.current_screen = CurrentScreen::P2PoolStatus;
+        app.p2pool_status_tab = 4;
+
+        assert!(matches!(
+            dispatch_key(press(KeyCode::Char('s')), &mut app),
+            KeyOutcome::Action(AppAction::None)
+        ));
+        assert!(matches!(
+            dispatch_key(press(KeyCode::Char('x')), &mut app),
+            KeyOutcome::Action(AppAction::None)
+        ));
+        assert!(matches!(
+            dispatch_key(press(KeyCode::Char('r')), &mut app),
+            KeyOutcome::Action(AppAction::None)
+        ));
+    }
+
+    #[test]
+    fn dispatch_key_p2pool_system_tab_maps_managed_service_controls() {
+        let home = std::env::var_os("HOME").expect("HOME is set for this test");
+        let mut app = App::new();
+        app.current_screen = CurrentScreen::P2PoolStatus;
+        app.p2pool_status_tab = 4;
+        app.p2pool_conf_path =
+            Some(std::path::PathBuf::from(home).join(".config/p2poolv2/config-signet.toml"));
+
+        assert!(matches!(
+            dispatch_key(press(KeyCode::Char('s')), &mut app),
+            KeyOutcome::Action(AppAction::StartP2Pool)
+        ));
+        assert!(matches!(
+            dispatch_key(press(KeyCode::Char('x')), &mut app),
+            KeyOutcome::Action(AppAction::StopP2Pool)
+        ));
+        assert!(matches!(
+            dispatch_key(press(KeyCode::Char('r')), &mut app),
+            KeyOutcome::Action(AppAction::RestartP2Pool)
+        ));
+    }
+
+    #[test]
+    fn dispatch_key_service_controls_are_ignored_on_other_p2pool_tabs() {
+        let mut app = App::new();
+        app.current_screen = CurrentScreen::P2PoolStatus;
+        app.p2pool_status_tab = 2;
+
+        assert!(matches!(
+            dispatch_key(press(KeyCode::Char('s')), &mut app),
+            KeyOutcome::Action(AppAction::None)
+        ));
     }
 
     #[test]
@@ -1006,7 +1295,7 @@ port = 46884
     #[test]
     fn open_explorer_for_settings_sets_state() {
         let mut app = App::new();
-        app.sidebar_index = 4;
+        app.sidebar_index = 5;
         app.toggle_menu();
 
         let flow = handle_action(AppAction::OpenExplorerForSettings(1), &mut app).unwrap();

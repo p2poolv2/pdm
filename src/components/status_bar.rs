@@ -78,6 +78,16 @@ impl StatusBar {
                 spans.extend(hint("←→", "Switch tab"));
                 spans.extend(hint("q", "Quit"));
             }
+            CurrentScreen::Monitoring => {
+                spans.extend(hint("↑↓", "Navigate sidebar"));
+                if app.p2pool_config.is_some() {
+                    spans.extend(hint("g", "Generate config"));
+                }
+                spans.extend(hint("s/x/r", "Prometheus"));
+                spans.extend(hint("S/X/R", "Grafana"));
+                spans.extend(hint("t", "Refresh status"));
+                spans.extend(hint("q", "Quit"));
+            }
             _ => {
                 spans.extend(hint("↑↓", "Navigate sidebar"));
                 spans.extend(hint("Enter", "Select"));
@@ -199,6 +209,24 @@ mod tests {
         app.settings_view.selected_index = 0;
         let output = render_status_bar(&app);
         assert!(!output.contains("Clear"));
+    }
+
+    #[test]
+    fn monitoring_status_bar_shows_service_controls() {
+        let mut app = App::new();
+        app.current_screen = CurrentScreen::Monitoring;
+        app.p2pool_config = Some(
+            p2poolv2_config::Config::load(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/p2pool.toml"
+            ))
+            .unwrap(),
+        );
+        let output = render_status_bar(&app);
+        assert!(output.contains("Generate config"));
+        assert!(output.contains("Prometheus"));
+        assert!(output.contains("Grafana"));
+        assert!(output.contains("Refresh status"));
     }
 
     #[test]
