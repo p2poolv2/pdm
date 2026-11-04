@@ -20,6 +20,7 @@ jobs:
     - name: Set up Rust
       uses: dtolnay/rust-toolchain@stable
       with:
+        toolchain: 1.99.0
         components: clippy, rustfmt
 
     - name: Cache Cargo registry
@@ -49,7 +50,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust
-        run: rustup update stable
+        run: rustup toolchain install
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
       - name: Generate code coverage

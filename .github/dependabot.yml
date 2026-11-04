@@ -31,6 +31,10 @@ updates:
       - dependency-name: "bitcoin"
         update-types:
           ["version-update:semver-major", "version-update:semver-minor"]
+      # serial_test 4 requires Rust 1.93.1, above our rust-version (1.88,
+      # matching P2Poolv2). Remove when rust-version is raised.
+      - dependency-name: "serial_test"
+        update-types: ["version-update:semver-major"]
 
   # security.yml pins actions by SHA. Dependabot is what keeps pinning
   # sustainable, by proposing the new SHA with its version comment.
