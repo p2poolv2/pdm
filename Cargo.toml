@@ -18,7 +18,7 @@ bitcoin = "0.32.5"
 toml_edit = "0.22"
 reqwest = { version = "0.13", features = ["json", "query"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
-base64 = "0.22.1"
+base64 = "0.23.1"
 futures-util = "0.3"
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 url = "2"
