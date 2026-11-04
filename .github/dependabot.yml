@@ -1,0 +1,49 @@
+version: 2
+
+updates:
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:08"
+    open-pull-requests-limit: 5
+    # Wait before proposing a release: most churn (follow-up patches, yanks,
+    # compromised publishes) happens in its first days. Security updates are
+    # not subject to cooldown, so advisories still arrive immediately.
+    cooldown:
+      default-days: 7
+      semver-major-days: 30
+      semver-minor-days: 7
+      semver-patch-days: 3
+    commit-message:
+      prefix: "deps"
+    groups:
+      # One PR a week for everything semver-compatible.
+      cargo-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    ignore:
+      # bitcoin types (e.g. Network) cross the boundary with p2poolv2_config,
+      # so pdm must stay on the same bitcoin release as P2Poolv2. Under cargo's
+      # 0.x rules 0.32 -> 0.33 is semver-minor, so ignore minor too. Bump it
+      # by hand together with the p2poolv2_config git dependency.
+      - dependency-name: "bitcoin"
+        update-types:
+          ["version-update:semver-major", "version-update:semver-minor"]
+
+  # security.yml pins actions by SHA. Dependabot is what keeps pinning
+  # sustainable, by proposing the new SHA with its version comment.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:16"
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "ci"
+    groups:
+      actions:
+        patterns: ["*"]

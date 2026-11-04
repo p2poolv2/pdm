@@ -1,0 +1,78 @@
+# Supply-chain policy for PDM. See docs in the cargo-deny book:
+# https://embarkstudios.github.io/cargo-deny/
+
+[graph]
+all-features = true
+# PDM manages systemd services, so it only targets Linux. Scoping this keeps
+# Windows- and macOS-only crates out of every check.
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+]
+
+[licenses]
+# PDM ships under AGPL-3.0, so a dependency licence must be compatible with
+# redistributing the linked work under the AGPL. Permissive licences and
+# MPL-2.0 (file-level copyleft, GPL-compatible) qualify. Every entry below was
+# observed in the tree; add new ones deliberately.
+allow = [
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unlicense",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "Unicode-3.0",
+    "BSL-1.0",
+    "MITNFA",
+    "MPL-2.0",
+]
+confidence-threshold = 0.93
+# Our own licence is our decision, not a dependency policy question.
+exceptions = [
+    { crate = "pdm", allow = ["AGPL-3.0-only"] },
+]
+
+[bans]
+# Cargo only hard-errors on duplicate `links` crates, so this check is the only
+# thing that catches version skew. Keep any skip list short and commented.
+multiple-versions = "warn"
+# Catch an accidental `foo = "*"` on a registry dependency.
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# p2poolv2_config (and its bitcoindrpc and p2poolv2_wallet deps) come from the
+# P2Poolv2 repository rather than crates.io.
+allow-git = ["https://github.com/p2poolv2/p2poolv2"]
+
+[advisories]
+# TRIAGE PROCEDURE
+#
+# This check reads Cargo.lock, but [graph] targets scopes it to the platforms
+# we ship. Before adding an ignore entry, classify it:
+#
+#   1. cargo tree -i <crate>@<version> --all-features
+#      Nothing printed means it is not in the host build graph.
+#   2. cargo tree -i <crate>@<version> --target all --all-features
+#      Shows which target or feature would pull it in.
+#   3. Classify as one of:
+#      reachable and fixable  -> fix it, do not ignore
+#      reachable but blocked  -> ignore, naming the upstream blocker
+#      lockfile only          -> should not reach this file; check the scoping
+#
+# Every entry carries the advisory id, why it is unfixable here, and the
+# condition under which it is removed. An ignore list without removal
+# conditions becomes permanent.
+ignore = []
+yanked = "deny"
+# "all" rather than "workspace": unmaintained transitive crates are the ones we
+# are least likely to notice otherwise.
+unmaintained = "all"
