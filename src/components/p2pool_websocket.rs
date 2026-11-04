@@ -190,7 +190,7 @@ impl P2PoolWebSocketClient {
                 "topic": topic,
             })
             .to_string();
-            write.send(Message::Text(subscribe_message)).await?;
+            write.send(Message::text(subscribe_message)).await?;
         }
 
         while let Some(message_result) = read.next().await {
@@ -416,9 +416,9 @@ mod tests {
                 r#"{"action":"subscribe","topic":"peers"}"#
             );
 
-            write.send(Message::Binary(vec![1, 2, 3])).await.unwrap();
+            write.send(Message::binary(vec![1, 2, 3])).await.unwrap();
             write
-                .send(Message::Text(
+                .send(Message::text(
                     serde_json::json!({
                         "topic": "Share",
                         "data": {
@@ -436,7 +436,7 @@ mod tests {
                 .await
                 .unwrap();
             write
-                .send(Message::Text(
+                .send(Message::text(
                     serde_json::json!({
                         "topic": "Peer",
                         "data": {
@@ -576,7 +576,7 @@ mod tests {
             let _ = read.next().await.unwrap().unwrap();
             let _ = read.next().await.unwrap().unwrap();
             write
-                .send(Message::Text(
+                .send(Message::text(
                     serde_json::json!({
                         "topic": "Share",
                         "data": {
