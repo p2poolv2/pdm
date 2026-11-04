@@ -16,7 +16,6 @@ dial_timeout_secs = 30
 
 [store]
 path = "./store.db"
-background_task_frequency_hours = 24
 pplns_ttl_days = 7
 
 [stratum]
@@ -29,7 +28,6 @@ bootstrap_address = "tb1qyazxde6558qj6z3d9np5e6msmrspwpf6k0qggk"
 zmqpubhashblock = "tcp://127.0.0.1:28332"
 network = "signet"
 version_mask = "1fffe000"
-difficulty_multiplier = 1.0
 pool_signature = "P2Poolv2"
 
 [bitcoinrpc]

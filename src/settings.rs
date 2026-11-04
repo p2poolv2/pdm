@@ -300,7 +300,6 @@ mod tests {
         let pointer = Settings {
             p2pool_conf_path: Some(PathBuf::from("/default/p2pool.toml")),
             settings_dir_override: Some(override_dir.path().to_path_buf()),
-            ..Default::default()
         };
         std::fs::write(
             default_dir.path().join("settings.toml"),
@@ -312,7 +311,6 @@ mod tests {
         let authoritative = Settings {
             p2pool_conf_path: Some(PathBuf::from("/override/p2pool.toml")),
             settings_dir_override: Some(override_dir.path().to_path_buf()),
-            ..Default::default()
         };
         std::fs::write(
             override_dir.path().join("settings.toml"),
@@ -338,7 +336,6 @@ mod tests {
         let pointer = Settings {
             p2pool_conf_path: Some(PathBuf::from("/default/p2pool.toml")),
             settings_dir_override: Some(PathBuf::from("/nonexistent/dir")),
-            ..Default::default()
         };
         std::fs::write(
             default_dir.path().join("settings.toml"),

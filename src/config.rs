@@ -220,13 +220,6 @@ pub fn flatten_config(cfg: &Config) -> Vec<P2PoolConfigEntry> {
         "Version-rolling mask (hex)",
         "hex i32",
     ));
-    e.push(P2PoolConfigEntry::required(
-        ConfigSection::Stratum,
-        "difficulty_multiplier",
-        s.difficulty_multiplier.to_string(),
-        "Multiplier for dynamic difficulty adjustment",
-        "f64",
-    ));
     e.push(P2PoolConfigEntry::optional(
         ConfigSection::Stratum,
         "ignore_difficulty",
@@ -331,13 +324,6 @@ pub fn flatten_config(cfg: &Config) -> Vec<P2PoolConfigEntry> {
         st.path.clone(),
         "Path to the persistent share store",
         "Path",
-    ));
-    e.push(P2PoolConfigEntry::required(
-        ConfigSection::Store,
-        "background_task_frequency_hours",
-        st.background_task_frequency_hours.to_string(),
-        "How often to run background cleanup tasks (hours)",
-        "u64",
     ));
     e.push(P2PoolConfigEntry::required(
         ConfigSection::Store,
@@ -511,9 +497,6 @@ pub fn dispatch_edit(
             cfg.stratum.version_mask = i32::from_str_radix(new_value.trim_start_matches("0x"), 16)
                 .map_err(|_| "must be hex (e.g. 1fffe000)")?;
         }
-        (ConfigSection::Stratum, "difficulty_multiplier") => {
-            cfg.stratum.difficulty_multiplier = new_value.parse().map_err(|_| "must be f64")?;
-        }
         (ConfigSection::Stratum, "ignore_difficulty") => {
             cfg.stratum.ignore_difficulty = if new_value.is_empty() {
                 None
@@ -570,10 +553,6 @@ pub fn dispatch_edit(
         // Store
         (ConfigSection::Store, "path") => {
             cfg.store.path = new_value.to_string();
-        }
-        (ConfigSection::Store, "background_task_frequency_hours") => {
-            cfg.store.background_task_frequency_hours =
-                new_value.parse().map_err(|_| "must be u64")?;
         }
         (ConfigSection::Store, "pplns_ttl_days") => {
             cfg.store.pplns_ttl_days = new_value.parse().map_err(|_| "must be u64")?;
@@ -668,7 +647,6 @@ zmqpubhashblock = "tcp://127.0.0.1:28332"
 bootstrap_address = "tb1qyazxde6558qj6z3d9np5e6msmrspwpf6k0qggk"
 network = "signet"
 version_mask = "1fffe000"
-difficulty_multiplier = 1.0
 pool_signature = "MyPool/1.0"
 
 [bitcoinrpc]
@@ -694,7 +672,6 @@ dial_timeout_secs = 30
 
 [store]
 path = "./data/store"
-background_task_frequency_hours = 1
 pplns_ttl_days = 7
 
 [logging]

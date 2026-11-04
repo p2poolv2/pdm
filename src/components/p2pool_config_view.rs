@@ -362,7 +362,6 @@ zmqpubhashblock = "tcp://127.0.0.1:28332"
 bootstrap_address = "tb1qyazxde6558qj6z3d9np5e6msmrspwpf6k0qggk"
 network = "signet"
 version_mask = "1fffe000"
-difficulty_multiplier = 1.0
 pool_signature = "MyPool/1.0"
 
 [bitcoinrpc]
@@ -388,7 +387,6 @@ dial_timeout_secs = 30
 
 [store]
 path = "./data/store"
-background_task_frequency_hours = 1
 pplns_ttl_days = 7
 
 [logging]
