@@ -9,6 +9,7 @@ use crate::components::{
     p2pool_config_view::P2PoolConfigView, p2pool_status_view::P2PoolStatusView,
     settings_view::SettingsView, status_bar::StatusBar,
 };
+use crate::theme;
 use ratatui::{
     prelude::*,
     widgets::{Block, Borders, List, ListItem, ListState},
@@ -43,7 +44,7 @@ pub fn ui(f: &mut Frame, app: &mut App) {
     let sidebar_border_style = if sidebar_focused {
         Style::default()
     } else {
-        Style::default().fg(Color::DarkGray)
+        theme::MUTED
     };
 
     let sidebar = List::new(items)
@@ -53,7 +54,7 @@ pub fn ui(f: &mut Frame, app: &mut App) {
                 .title(" PDM ")
                 .border_style(sidebar_border_style),
         )
-        .highlight_style(Style::default().bg(Color::Gray).fg(Color::Black));
+        .highlight_style(theme::HIGHLIGHT);
 
     f.render_stateful_widget(sidebar, chunks[0], &mut state);
 

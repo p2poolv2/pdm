@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 use crate::app::{App, BITCOIN_STATUS_TABS};
+use crate::theme;
 
 use ratatui::{
     prelude::*,
@@ -36,7 +37,7 @@ impl BitcoinStatusView {
         let tabs = Tabs::new(BITCOIN_STATUS_TABS.to_vec())
             .block(Block::default().borders(Borders::ALL).title(" Info "))
             .select(app.bitcoin_status_tab)
-            .highlight_style(Style::default().bg(Color::Gray).fg(Color::Black));
+            .highlight_style(theme::HIGHLIGHT);
 
         f.render_widget(tabs, outer[0]);
 
@@ -54,7 +55,7 @@ impl BitcoinStatusView {
         let text = if app.p2pool_config.is_none() {
             vec![Line::from(Span::styled(
                 "Select a P2Poolv2 config file to load Bitcoin Core chain info.",
-                Style::default().fg(Color::DarkGray),
+                theme::MUTED,
             ))]
         } else if let Some(info) = &app.bitcoin_chain_info {
             vec![
@@ -77,12 +78,12 @@ impl BitcoinStatusView {
         } else if let Some(err) = &app.bitcoin_chain_info_error {
             vec![Line::from(Span::styled(
                 format!("Failed to fetch Bitcoin chain info: {err}"),
-                Style::default().fg(Color::Red),
+                theme::ERROR,
             ))]
         } else {
             vec![Line::from(Span::styled(
                 "Loading Bitcoin chain info...",
-                Style::default().fg(Color::DarkGray),
+                theme::MUTED,
             ))]
         };
 
@@ -97,7 +98,7 @@ impl BitcoinStatusView {
         let text = if app.p2pool_config.is_none() {
             vec![Line::from(Span::styled(
                 "Select a P2Poolv2 config file to load Bitcoin Core peer info.",
-                Style::default().fg(Color::DarkGray),
+                theme::MUTED,
             ))]
         } else if let Some(info) = &app.bitcoin_chain_info {
             let mut lines = Vec::with_capacity(info.connected_peer_addresses.len() + 3);
@@ -122,12 +123,12 @@ impl BitcoinStatusView {
         } else if let Some(err) = &app.bitcoin_chain_info_error {
             vec![Line::from(Span::styled(
                 format!("Failed to fetch Bitcoin peer info: {err}"),
-                Style::default().fg(Color::Red),
+                theme::ERROR,
             ))]
         } else {
             vec![Line::from(Span::styled(
                 "Loading Bitcoin peer info...",
-                Style::default().fg(Color::DarkGray),
+                theme::MUTED,
             ))]
         };
 
