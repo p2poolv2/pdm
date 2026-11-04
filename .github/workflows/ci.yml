@@ -2,61 +2,66 @@ name: CI
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
 
 env:
   CARGO_TERM_COLOR: always
 
+permissions:
+  contents: read
+
 jobs:
   test:
     name: Test & Lint
-    runs-on: ubuntu-latest
-
+    runs-on: ubuntu-26.04
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-    - name: Set up Rust
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        toolchain: 1.99.0
-        components: clippy, rustfmt
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: 1.99.0
+          components: clippy, rustfmt
 
-    - name: Cache Cargo registry
-      uses: actions/cache@v3
-      with:
-        path: |
-          ~/.cargo/registry
-          ~/.cargo/git
-          target
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
-    - name: Check Formatting
-      run: cargo fmt -- --check
+      - name: Check formatting
+        run: cargo fmt --all -- --check
 
-    - name: Run Clippy
-      run: cargo clippy
+      - name: Run clippy
+        run: cargo clippy --all-targets -- -D warnings
 
-    - name: Run Tests
-      # This will fail if the generated snapshots don't match the committed snapshots
-      run: cargo test
+      - name: Run tests
+        # This will fail if the generated snapshots don't match the committed snapshots
+        run: cargo test
 
   coverage:
     name: Code Coverage
-    runs-on: ubuntu-latest
-    env:
-      CARGO_TERM_COLOR: always
+    runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
       - name: Install Rust
         run: rustup toolchain install
+
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@cargo-llvm-cov
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        with:
+          tool: cargo-llvm-cov
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
       - name: Generate code coverage
         run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
+
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: lcov.info
