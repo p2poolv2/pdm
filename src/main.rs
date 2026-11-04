@@ -8,9 +8,9 @@ use pdm::app::{
     MAX_SIDEBAR_INDEX,
 };
 use pdm::components::settings_view::{FIELDS, FieldKind};
-use pdm::p2poolv2_config::{apply_edit as apply_p2pool_edit, flatten_config};
-use pdm::p2poolv2_service::{P2PoolV2Service, ServiceAction, instance_from_config_path};
+use pdm::config::{apply_edit as apply_p2pool_edit, flatten_config};
 use pdm::settings::{load_settings, save_settings};
+use pdm::systemd::{P2PoolV2Service, ServiceAction, instance_from_config_path};
 use pdm::ui;
 use std::ops::ControlFlow;
 
@@ -479,7 +479,7 @@ fn typed_toml_item_like(existing: &toml_edit::Item, new_value: &str) -> Result<t
 /// Saves P2Pool config by patching the original TOML file in-place.
 /// Uses toml_edit so comments and formatting are preserved.
 fn save_p2pool_config(path: &std::path::Path, cfg: &P2PoolConfig) -> Result<()> {
-    use pdm::p2poolv2_config::flatten_config;
+    use pdm::config::flatten_config;
     use toml_edit::DocumentMut;
 
     // Read the original file so we preserve comments/ordering

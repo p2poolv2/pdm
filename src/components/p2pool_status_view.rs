@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 use crate::app::{App, P2POOL_STATUS_TABS};
-use crate::p2poolv2_service::instance_from_config_path;
+use crate::systemd::instance_from_config_path;
 use ratatui::{
     prelude::*,
     widgets::{Block, Borders, Cell, Paragraph, Row, Table, Tabs, Wrap},
@@ -702,7 +702,7 @@ mod tests {
     fn render_system_tab_shows_running_status() {
         let mut app = App::new();
         app.p2pool_status_tab = SYSTEM_TAB;
-        let config_dir = crate::p2poolv2_service::user_p2pool_config_dir().unwrap();
+        let config_dir = crate::systemd::user_p2pool_config_dir().unwrap();
         app.p2pool_conf_path = Some(config_dir.join("config-signet.toml"));
         app.p2pool_running_status = Some(Ok(true));
 
@@ -717,7 +717,7 @@ mod tests {
     fn render_system_tab_shows_stopped_status() {
         let mut app = App::new();
         app.p2pool_status_tab = SYSTEM_TAB;
-        let config_dir = crate::p2poolv2_service::user_p2pool_config_dir().unwrap();
+        let config_dir = crate::systemd::user_p2pool_config_dir().unwrap();
         app.p2pool_conf_path = Some(config_dir.join("config-signet.toml"));
         app.p2pool_running_status = Some(Ok(false));
 
@@ -732,7 +732,7 @@ mod tests {
     fn render_system_tab_shows_unavailable_status_on_error() {
         let mut app = App::new();
         app.p2pool_status_tab = SYSTEM_TAB;
-        let config_dir = crate::p2poolv2_service::user_p2pool_config_dir().unwrap();
+        let config_dir = crate::systemd::user_p2pool_config_dir().unwrap();
         app.p2pool_conf_path = Some(config_dir.join("config-signet.toml"));
         app.p2pool_running_status = Some(Err("failed to execute systemctl".to_string()));
 
@@ -748,7 +748,7 @@ mod tests {
     fn render_system_tab_shows_unknown_status_when_uninitialized() {
         let mut app = App::new();
         app.p2pool_status_tab = SYSTEM_TAB;
-        let config_dir = crate::p2poolv2_service::user_p2pool_config_dir().unwrap();
+        let config_dir = crate::systemd::user_p2pool_config_dir().unwrap();
         app.p2pool_conf_path = Some(config_dir.join("config-signet.toml"));
         app.p2pool_running_status = None;
 

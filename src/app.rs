@@ -10,8 +10,8 @@ use crate::components::p2pool_websocket::{
     LiveP2PoolEvent, LivePeerEvent, LiveShare, P2PoolWebSocketClient,
 };
 use crate::components::settings_view::SettingsView;
-use crate::p2poolv2_service::{P2PoolV2Service, ServiceAction, instance_from_config_path};
 use crate::settings::Settings;
+use crate::systemd::{P2PoolV2Service, ServiceAction, instance_from_config_path};
 use p2poolv2_config::Config as P2PoolConfig;
 use std::path::PathBuf;
 use tokio::sync::mpsc;
@@ -782,7 +782,7 @@ mod tests {
     #[test]
     fn poll_p2pool_running_status_preserves_ok_and_err_results() {
         let mut app = App::new();
-        let config_dir = crate::p2poolv2_service::user_p2pool_config_dir().unwrap();
+        let config_dir = crate::systemd::user_p2pool_config_dir().unwrap();
         app.p2pool_conf_path = Some(config_dir.join("config-signet.toml"));
 
         app.p2pool_running_status_tx
@@ -813,7 +813,7 @@ mod tests {
     #[test]
     fn poll_p2pool_running_status_ignores_results_for_other_instances() {
         let mut app = App::new();
-        let config_dir = crate::p2poolv2_service::user_p2pool_config_dir().unwrap();
+        let config_dir = crate::systemd::user_p2pool_config_dir().unwrap();
         app.p2pool_conf_path = Some(config_dir.join("config-signet.toml"));
         app.p2pool_running_status = Some(Ok(true));
 
