@@ -9,7 +9,7 @@ use pdm::app::{
 };
 use pdm::components::settings_view::{FIELDS, FieldKind};
 use pdm::p2poolv2_config::{apply_edit as apply_p2pool_edit, flatten_config};
-use pdm::p2poolv2_service::{P2PoolV2Service, instance_from_config_path};
+use pdm::p2poolv2_service::{P2PoolV2Service, ServiceAction, instance_from_config_path};
 use pdm::settings::{load_settings, save_settings};
 use pdm::ui;
 use std::ops::ControlFlow;
@@ -153,38 +153,19 @@ fn dispatch_key(key: event::KeyEvent, app: &mut App) -> KeyOutcome {
                 }
                 AppAction::None
             }
-            KeyCode::Char('s') if app.p2pool_status_tab == 3 => {
+            KeyCode::Char(key @ ('s' | 'x' | 'r')) if app.p2pool_status_tab == 3 => {
+                let action = match key {
+                    's' => ServiceAction::Start,
+                    'x' => ServiceAction::Stop,
+                    _ => ServiceAction::Restart,
+                };
                 if app
                     .p2pool_conf_path
                     .as_deref()
                     .and_then(instance_from_config_path)
                     .is_some()
                 {
-                    AppAction::StartP2Pool
-                } else {
-                    AppAction::None
-                }
-            }
-            KeyCode::Char('x') if app.p2pool_status_tab == 3 => {
-                if app
-                    .p2pool_conf_path
-                    .as_deref()
-                    .and_then(instance_from_config_path)
-                    .is_some()
-                {
-                    AppAction::StopP2Pool
-                } else {
-                    AppAction::None
-                }
-            }
-            KeyCode::Char('r') if app.p2pool_status_tab == 3 => {
-                if app
-                    .p2pool_conf_path
-                    .as_deref()
-                    .and_then(instance_from_config_path)
-                    .is_some()
-                {
-                    AppAction::RestartP2Pool
+                    AppAction::P2PoolService(action)
                 } else {
                     AppAction::None
                 }
@@ -431,43 +412,15 @@ fn handle_action(action: AppAction, app: &mut App) -> Result<ControlFlow<()>> {
             }
         }
 
-        AppAction::StartP2Pool => {
+        AppAction::P2PoolService(action) => {
             app.p2pool_service_error = None;
             if let Some(instance) = app
                 .p2pool_conf_path
                 .as_deref()
                 .and_then(instance_from_config_path)
             {
-                if let Err(error) = P2PoolV2Service::start(&instance) {
-                    app.p2pool_service_error = Some(format!("Start failed: {error}"));
-                } else {
-                    app.refresh_p2pool_running_status();
-                }
-            }
-        }
-        AppAction::StopP2Pool => {
-            app.p2pool_service_error = None;
-            if let Some(instance) = app
-                .p2pool_conf_path
-                .as_deref()
-                .and_then(instance_from_config_path)
-            {
-                if let Err(error) = P2PoolV2Service::stop(&instance) {
-                    app.p2pool_service_error = Some(format!("Stop failed: {error}"));
-                } else {
-                    app.refresh_p2pool_running_status();
-                }
-            }
-        }
-        AppAction::RestartP2Pool => {
-            app.p2pool_service_error = None;
-            if let Some(instance) = app
-                .p2pool_conf_path
-                .as_deref()
-                .and_then(instance_from_config_path)
-            {
-                if let Err(error) = P2PoolV2Service::restart(&instance) {
-                    app.p2pool_service_error = Some(format!("Restart failed: {error}"));
+                if let Err(error) = P2PoolV2Service::run(action, &instance) {
+                    app.p2pool_service_error = Some(format!("{} failed: {error}", action.label()));
                 } else {
                     app.refresh_p2pool_running_status();
                 }
@@ -909,15 +862,15 @@ port = 46884
 
         assert!(matches!(
             dispatch_key(press(KeyCode::Char('s')), &mut app),
-            KeyOutcome::Action(AppAction::StartP2Pool)
+            KeyOutcome::Action(AppAction::P2PoolService(ServiceAction::Start))
         ));
         assert!(matches!(
             dispatch_key(press(KeyCode::Char('x')), &mut app),
-            KeyOutcome::Action(AppAction::StopP2Pool)
+            KeyOutcome::Action(AppAction::P2PoolService(ServiceAction::Stop))
         ));
         assert!(matches!(
             dispatch_key(press(KeyCode::Char('r')), &mut app),
-            KeyOutcome::Action(AppAction::RestartP2Pool)
+            KeyOutcome::Action(AppAction::P2PoolService(ServiceAction::Restart))
         ));
     }
 

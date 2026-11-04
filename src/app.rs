@@ -10,7 +10,7 @@ use crate::components::p2pool_websocket::{
     LiveP2PoolEvent, LivePeerEvent, LiveShare, P2PoolWebSocketClient,
 };
 use crate::components::settings_view::SettingsView;
-use crate::p2poolv2_service::{P2PoolV2Service, instance_from_config_path};
+use crate::p2poolv2_service::{P2PoolV2Service, ServiceAction, instance_from_config_path};
 use crate::settings::Settings;
 use p2poolv2_config::Config as P2PoolConfig;
 use std::path::PathBuf;
@@ -73,10 +73,8 @@ pub enum AppAction {
     CommitP2PoolEdit(usize, String),
     /// Saves p2pool config to disk
     SaveP2PoolConfig,
-    /// P2poolv2 Service
-    StartP2Pool,
-    StopP2Pool,
-    RestartP2Pool,
+    /// Applies a systemd action to the P2Poolv2 service instance
+    P2PoolService(ServiceAction),
     // Open the file explorer to pick a path for a settings field (field index)
     OpenExplorerForSettings(usize),
     // Clear a settings field by index, setting it back to None

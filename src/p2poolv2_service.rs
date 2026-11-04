@@ -45,21 +45,36 @@ fn service_name(instance: &str) -> String {
     format!("{SERVICE_PREFIX}{instance}")
 }
 
+/// A state-changing systemd action that can be applied to a P2Poolv2 service instance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServiceAction {
+    Start,
+    Stop,
+    Restart,
+}
+
+impl ServiceAction {
+    fn systemctl_action(self) -> &'static str {
+        match self {
+            Self::Start => "start",
+            Self::Stop => "stop",
+            Self::Restart => "restart",
+        }
+    }
+
+    /// Human-readable name for use in UI messages.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Start => "Start",
+            Self::Stop => "Stop",
+            Self::Restart => "Restart",
+        }
+    }
+}
+
 pub struct P2PoolV2Service;
 
 impl P2PoolV2Service {
-    pub fn start(instance: &str) -> Result<()> {
-        Self::run_systemctl("start", instance)
-    }
-
-    pub fn stop(instance: &str) -> Result<()> {
-        Self::run_systemctl("stop", instance)
-    }
-
-    pub fn restart(instance: &str) -> Result<()> {
-        Self::run_systemctl("restart", instance)
-    }
-
     pub fn is_running(instance: &str) -> Result<bool> {
         let service = validated_service_name(instance)?;
         let output = Command::new("systemctl")
@@ -70,7 +85,8 @@ impl P2PoolV2Service {
         Ok(output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "active")
     }
 
-    fn run_systemctl(action: &str, instance: &str) -> Result<()> {
+    pub fn run(action: ServiceAction, instance: &str) -> Result<()> {
+        let action = action.systemctl_action();
         let service = validated_service_name(instance)?;
         let output = Command::new("systemctl")
             .args(["--user", action, &service])
@@ -163,9 +179,9 @@ mod tests {
         let (_dir, old_path, args_file) = fake_systemctl(false, true);
 
         let result = (|| {
-            P2PoolV2Service::start("signet")?;
-            P2PoolV2Service::stop("signet")?;
-            P2PoolV2Service::restart("signet")?;
+            P2PoolV2Service::run(ServiceAction::Start, "signet")?;
+            P2PoolV2Service::run(ServiceAction::Stop, "signet")?;
+            P2PoolV2Service::run(ServiceAction::Restart, "signet")?;
             assert!(P2PoolV2Service::is_running("signet")?);
             assert_eq!(
                 fs::read_to_string(args_file)?,
@@ -184,9 +200,15 @@ mod tests {
     fn service_actions_report_systemctl_failures() {
         let (_dir, old_path, _args_file) = fake_systemctl(true, false);
 
-        let start_error = P2PoolV2Service::start("signet").unwrap_err().to_string();
-        let stop_error = P2PoolV2Service::stop("signet").unwrap_err().to_string();
-        let restart_error = P2PoolV2Service::restart("signet").unwrap_err().to_string();
+        let start_error = P2PoolV2Service::run(ServiceAction::Start, "signet")
+            .unwrap_err()
+            .to_string();
+        let stop_error = P2PoolV2Service::run(ServiceAction::Stop, "signet")
+            .unwrap_err()
+            .to_string();
+        let restart_error = P2PoolV2Service::run(ServiceAction::Restart, "signet")
+            .unwrap_err()
+            .to_string();
         let running = P2PoolV2Service::is_running("signet").unwrap();
 
         restore_path(old_path);
@@ -244,9 +266,9 @@ mod tests {
     fn start_and_stop_service() -> Result<()> {
         assert!(!P2PoolV2Service::is_running("signet")?);
 
-        P2PoolV2Service::start("signet")?;
+        P2PoolV2Service::run(ServiceAction::Start, "signet")?;
         let running = P2PoolV2Service::is_running("signet");
-        let stop_result = P2PoolV2Service::stop("signet");
+        let stop_result = P2PoolV2Service::run(ServiceAction::Stop, "signet");
 
         assert!(running?);
         stop_result?;
