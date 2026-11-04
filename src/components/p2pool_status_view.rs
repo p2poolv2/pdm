@@ -4,6 +4,7 @@
 
 use crate::app::{App, P2POOL_STATUS_TABS};
 use crate::systemd::instance_from_config_path;
+use crate::theme;
 use ratatui::{
     prelude::*,
     widgets::{Block, Borders, Cell, Paragraph, Row, Table, Tabs, Wrap},
@@ -42,7 +43,7 @@ impl P2PoolStatusView {
         let tabs = Tabs::new(P2POOL_STATUS_TABS.to_vec())
             .block(Block::default().borders(Borders::ALL).title(" Info "))
             .select(app.p2pool_status_tab)
-            .highlight_style(Style::default().bg(Color::Gray).fg(Color::Black));
+            .highlight_style(theme::HIGHLIGHT);
 
         f.render_widget(tabs, outer[0]);
 
@@ -76,17 +77,17 @@ impl P2PoolStatusView {
         } else if let Some(err) = &app.p2pool_chain_info_error {
             vec![Line::from(Span::styled(
                 format!("Failed to fetch chain info: {err}"),
-                Style::default().fg(Color::Red),
+                theme::ERROR,
             ))]
         } else if app.p2pool_config.is_none() {
             vec![Line::from(Span::styled(
                 "Select a P2Poolv2 config file to load P2Pool chain info.",
-                Style::default().fg(Color::DarkGray),
+                theme::MUTED,
             ))]
         } else {
             vec![Line::from(Span::styled(
                 "Loading chain info...",
-                Style::default().fg(Color::DarkGray),
+                theme::MUTED,
             ))]
         };
 
@@ -111,11 +112,7 @@ impl P2PoolStatusView {
             "Time",
             "Uncles",
         ])
-        .style(
-            Style::default()
-                .fg(Color::Gray)
-                .add_modifier(Modifier::BOLD),
-        )
+        .style(theme::EMPHASIS)
         .bottom_margin(1);
         let widths = [
             Constraint::Length(7),
@@ -129,8 +126,7 @@ impl P2PoolStatusView {
         let table = Table::new(rows, widths)
             .block(Block::default().borders(Borders::ALL).title(" Shares "))
             .header(header)
-            .column_spacing(1)
-            .style(Style::default().fg(Color::White));
+            .column_spacing(1);
 
         f.render_widget(table, area);
     }
@@ -138,10 +134,7 @@ impl P2PoolStatusView {
     fn render_peer_info(f: &mut Frame, app: &App, area: Rect) {
         let mut text = if let Some(peers) = &app.peer_info {
             if peers.is_empty() {
-                vec![Line::from(Span::styled(
-                    "No connected peers",
-                    Style::default().fg(Color::DarkGray),
-                ))]
+                vec![Line::from(Span::styled("No connected peers", theme::MUTED))]
             } else {
                 let mut lines = Vec::with_capacity(peers.len() + 2);
                 lines.push(Line::from(format!(
@@ -163,17 +156,17 @@ impl P2PoolStatusView {
         } else if let Some(err) = &app.p2pool_peer_info_error {
             vec![Line::from(Span::styled(
                 format!("Failed to fetch peer info: {err}"),
-                Style::default().fg(Color::Red),
+                theme::ERROR,
             ))]
         } else if app.p2pool_config.is_none() {
             vec![Line::from(Span::styled(
                 "Select a P2Poolv2 config file to load P2Pool peer info.",
-                Style::default().fg(Color::DarkGray),
+                theme::MUTED,
             ))]
         } else {
             vec![Line::from(Span::styled(
                 "Loading peer info...",
-                Style::default().fg(Color::DarkGray),
+                theme::MUTED,
             ))]
         };
 
@@ -181,7 +174,7 @@ impl P2PoolStatusView {
             text.push(Line::from(""));
             text.push(Line::from(Span::styled(
                 format!("Live stream error: {err}"),
-                Style::default().fg(Color::Red),
+                theme::ERROR,
             )));
         }
 
@@ -210,10 +203,7 @@ impl P2PoolStatusView {
     fn render_system_info(f: &mut Frame, app: &App, area: Rect) {
         if let Some(error) = &app.p2pool_service_error {
             let paragraph = Paragraph::new(vec![
-                Line::from(Span::styled(
-                    "Service action failed",
-                    Style::default().fg(Color::Red),
-                )),
+                Line::from(Span::styled("Service action failed", theme::ERROR)),
                 Line::from(""),
                 Line::from(error.as_str()),
             ])
@@ -230,10 +220,10 @@ impl P2PoolStatusView {
             .and_then(instance_from_config_path)
         {
             let status = match &app.p2pool_running_status {
-                Some(Ok(true)) => Span::styled("Running", Style::default().fg(Color::Green)),
-                Some(Ok(false)) => Span::styled("Stopped", Style::default().fg(Color::Red)),
-                Some(Err(_)) => Span::styled("Unavailable", Style::default().fg(Color::Yellow)),
-                None => Span::styled("Unknown", Style::default().fg(Color::DarkGray)),
+                Some(Ok(true)) => Span::styled("Running", theme::SUCCESS),
+                Some(Ok(false)) => Span::styled("Stopped", theme::ERROR),
+                Some(Err(_)) => Span::styled("Unavailable", theme::WARNING),
+                None => Span::styled("Unknown", theme::MUTED),
             };
 
             vec![
@@ -244,10 +234,7 @@ impl P2PoolStatusView {
             ]
         } else {
             vec![
-                Line::from(Span::styled(
-                    "Service controls unavailable",
-                    Style::default().fg(Color::Yellow),
-                )),
+                Line::from(Span::styled("Service controls unavailable", theme::WARNING)),
                 Line::from(""),
                 Line::from("Select a config in the user config directory"),
                 Line::from("with a config-<instance>.toml filename."),
@@ -359,7 +346,7 @@ impl P2PoolStatusView {
 
     fn message_row(message: String) -> Row<'static> {
         Row::new(vec![
-            Cell::from(Span::styled(message, Style::default().fg(Color::DarkGray))),
+            Cell::from(Span::styled(message, theme::MUTED)),
             Cell::from(""),
             Cell::from(""),
             Cell::from(""),
@@ -385,10 +372,7 @@ impl P2PoolStatusView {
     }
 
     fn chip(value: String) -> Cell<'static> {
-        Cell::from(Span::styled(
-            value,
-            Style::default().fg(Color::Gray).bg(Color::Black),
-        ))
+        Cell::from(Span::styled(value, theme::ACCENT))
     }
 
     fn format_difficulty(bits: &str) -> String {

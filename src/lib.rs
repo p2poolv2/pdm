@@ -7,4 +7,5 @@ pub mod components;
 pub mod config;
 pub mod settings;
 pub mod systemd;
+pub mod theme;
 pub mod ui;

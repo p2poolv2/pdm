@@ -4,6 +4,7 @@
 
 use crate::app::{App, AppAction};
 use crate::config::{FieldKind, P2PoolConfigEntry, flatten_config};
+use crate::theme;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     prelude::*,
@@ -28,21 +29,13 @@ pub fn entry_display(entry: &P2PoolConfigEntry) -> (String, Style) {
         } else {
             entry.value.clone()
         };
-        (
-            v,
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
-        )
+        (v, theme::EMPHASIS)
     } else {
         let placeholder = match &entry.schema.kind {
             FieldKind::Optional { default: Some(d) } => format!("default: {}", d),
             _ => "not set".to_string(),
         };
-        (
-            format!("({})", placeholder),
-            Style::default().fg(Color::DarkGray),
-        )
+        (format!("({})", placeholder), theme::MUTED)
     }
 }
 
@@ -136,7 +129,7 @@ impl P2PoolConfigView {
                 .unwrap_or("Press [Enter] to select a p2poolv2 config file");
 
             let style = if app.p2pool_config_view.warning_message.is_some() {
-                Style::default().fg(Color::Red)
+                theme::ERROR
             } else {
                 Style::default()
             };
@@ -162,12 +155,12 @@ impl P2PoolConfigView {
             .p2pool_config_view
             .warning_message
             .as_deref()
-            .map(|msg| (msg, Style::default().fg(Color::Red)))
+            .map(|msg| (msg, theme::ERROR))
             .or_else(|| {
                 app.p2pool_config_view
                     .save_message
                     .as_deref()
-                    .map(|msg| (msg, Style::default().fg(Color::Green)))
+                    .map(|msg| (msg, theme::SUCCESS))
             });
 
         // If there is a message, crave a 3-row strip off the top and render the rest of the view beneath it.
@@ -200,20 +193,11 @@ impl P2PoolConfigView {
 
                 ListItem::new(vec![
                     Line::from(vec![
-                        Span::styled(
-                            format!("[{}] ", entry.section),
-                            Style::default().fg(Color::Blue),
-                        ),
-                        Span::styled(
-                            entry.schema.description.as_str(),
-                            Style::default().fg(Color::Gray),
-                        ),
+                        Span::styled(format!("[{}] ", entry.section), theme::SECTION),
+                        Span::raw(entry.schema.description.as_str()),
                     ]),
                     Line::from(vec![
-                        Span::styled(
-                            format!("{} = ", entry.key),
-                            Style::default().fg(Color::Cyan),
-                        ),
+                        Span::styled(format!("{} = ", entry.key), theme::ACCENT),
                         Span::styled(value_display, value_style),
                     ]),
                 ])
@@ -230,7 +214,7 @@ impl P2PoolConfigView {
 
         let list = List::new(items)
             .block(Block::default().borders(Borders::ALL).title(title))
-            .highlight_style(Style::default().bg(Color::DarkGray));
+            .highlight_style(theme::HIGHLIGHT);
 
         f.render_stateful_widget(list, panels[0], &mut list_state);
 
@@ -257,29 +241,21 @@ impl P2PoolConfigView {
                 ])
                 .split(inner);
 
-            f.render_widget(
-                Paragraph::new(entry.schema.description.as_str())
-                    .style(Style::default().fg(Color::White)),
-                rows[0],
-            );
+            f.render_widget(Paragraph::new(entry.schema.description.as_str()), rows[0]);
             f.render_widget(
                 Paragraph::new(format!(
                     "[{}]  type: {}",
                     entry.section, entry.schema.type_hint
-                ))
-                .style(Style::default().fg(Color::Gray)),
+                )),
                 rows[1],
             );
-            f.render_widget(
-                Paragraph::new("Value:").style(Style::default().fg(Color::Gray)),
-                rows[3],
-            );
+            f.render_widget(Paragraph::new("Value:"), rows[3]);
 
             if editing {
                 f.render_widget(
                     Paragraph::new(edit_display(&edit_input, entry.schema.sensitive))
                         .block(Block::default().borders(Borders::ALL))
-                        .style(Style::default().fg(Color::Yellow)),
+                        .style(theme::EDITING),
                     rows[4],
                 );
             } else {
@@ -294,7 +270,7 @@ impl P2PoolConfigView {
 
             if entry.schema.sensitive {
                 f.render_widget(
-                    Paragraph::new("⚠ sensitive field").style(Style::default().fg(Color::Yellow)),
+                    Paragraph::new("Sensitive field").style(theme::WARNING),
                     rows[5],
                 );
             }
@@ -533,7 +509,7 @@ port = 3030
         let entry = make_entry("host", "127.0.0.1", true);
         let (display, style) = entry_display(&entry);
         assert_eq!(display, "127.0.0.1");
-        assert_eq!(style.fg, Some(Color::White));
+        assert_eq!(style, theme::EMPHASIS);
     }
 
     #[test]
@@ -552,7 +528,7 @@ port = 3030
         };
         let (display, style) = entry_display(&entry);
         assert_eq!(display, "(default: 3333)");
-        assert_eq!(style.fg, Some(Color::DarkGray));
+        assert_eq!(style, theme::MUTED);
     }
 
     #[test]

@@ -33,15 +33,15 @@ TestBackend {
         ],
         styles: [
             x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
-            x: 1, y: 1, fg: Black, bg: Gray, underline: Reset, modifier: NONE,
+            x: 1, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: REVERSED,
             x: 24, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
-            x: 0, y: 23, fg: White, bg: DarkGray, underline: Reset, modifier: NONE,
-            x: 4, y: 23, fg: DarkGray, bg: Black, underline: Reset, modifier: NONE,
-            x: 23, y: 23, fg: White, bg: DarkGray, underline: Reset, modifier: NONE,
-            x: 30, y: 23, fg: DarkGray, bg: Black, underline: Reset, modifier: NONE,
-            x: 39, y: 23, fg: White, bg: DarkGray, underline: Reset, modifier: NONE,
-            x: 42, y: 23, fg: DarkGray, bg: Black, underline: Reset, modifier: NONE,
-            x: 49, y: 23, fg: Reset, bg: Black, underline: Reset, modifier: NONE,
+            x: 0, y: 23, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD | REVERSED,
+            x: 4, y: 23, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+            x: 23, y: 23, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD | REVERSED,
+            x: 30, y: 23, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+            x: 39, y: 23, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD | REVERSED,
+            x: 42, y: 23, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+            x: 49, y: 23, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         ]
     },
     scrollback: Buffer {

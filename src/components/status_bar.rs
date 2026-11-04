@@ -4,6 +4,7 @@
 
 use crate::app::{App, CurrentScreen};
 use crate::components::settings_view::{FIELDS, FieldKind};
+use crate::theme;
 use ratatui::{prelude::*, widgets::Paragraph};
 
 #[derive(Clone, Debug)]
@@ -11,11 +12,8 @@ pub struct StatusBar;
 
 fn hint(key: &str, desc: &str) -> Vec<Span<'static>> {
     vec![
-        Span::styled(
-            format!(" {key} "),
-            Style::default().bg(Color::DarkGray).fg(Color::White),
-        ),
-        Span::styled(format!(" {desc}  "), Style::default().fg(Color::DarkGray)),
+        Span::styled(format!(" {key} "), theme::KEY_HINT),
+        Span::styled(format!(" {desc}  "), theme::MUTED),
     ]
 }
 
@@ -43,10 +41,7 @@ impl StatusBar {
             }
             CurrentScreen::Settings => {
                 if let Some(err) = &app.settings_view.save_error {
-                    spans.push(Span::styled(
-                        format!(" ⚠ {err}  "),
-                        Style::default().fg(Color::Red),
-                    ));
+                    spans.push(Span::styled(format!(" Error: {err}  "), theme::ERROR));
                 } else if app.settings_view.sidebar_focused {
                     spans.extend(hint("↑↓", "Navigate sidebar"));
                     spans.extend(hint("Enter", "Focus settings"));
@@ -85,7 +80,7 @@ impl StatusBar {
             }
         }
 
-        let bar = Paragraph::new(Line::from(spans)).style(Style::default().bg(Color::Black));
+        let bar = Paragraph::new(Line::from(spans));
         f.render_widget(bar, area);
     }
 }

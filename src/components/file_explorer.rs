@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 use crate::app::{App, AppAction};
+use crate::theme;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     prelude::*,
@@ -203,7 +204,7 @@ impl FileExplorer {
 
         let list = List::new(files)
             .block(Block::default().borders(Borders::ALL).title(title))
-            .highlight_style(Style::default().bg(Color::Blue).fg(Color::White))
+            .highlight_style(theme::HIGHLIGHT)
             .highlight_symbol(">> ");
 
         f.render_stateful_widget(list, area, &mut state);

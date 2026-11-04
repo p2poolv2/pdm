@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 use crate::app::{App, AppAction};
+use crate::theme;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     prelude::*,
@@ -92,12 +93,7 @@ impl SettingsView {
                 let (label, _kind) = FIELDS[idx];
                 let val = &values[idx];
                 let (display, style) = match val {
-                    Some(v) => (
-                        v.clone(),
-                        Style::default()
-                            .fg(Color::White)
-                            .add_modifier(Modifier::BOLD),
-                    ),
+                    Some(v) => (v.clone(), theme::EMPHASIS),
                     None => {
                         if idx == 1 {
                             let path = if app.config_dir.as_os_str().is_empty() {
@@ -105,17 +101,14 @@ impl SettingsView {
                             } else {
                                 app.config_dir.to_string_lossy().into_owned()
                             };
-                            (path, Style::default().fg(Color::DarkGray))
+                            (path, theme::MUTED)
                         } else {
-                            (
-                                "(not set)".to_string(),
-                                Style::default().fg(Color::DarkGray),
-                            )
+                            ("(not set)".to_string(), theme::MUTED)
                         }
                     }
                 };
                 ListItem::new(vec![
-                    Line::from(Span::styled(label, Style::default().fg(Color::Gray))),
+                    Line::from(Span::raw(label)),
                     Line::from(Span::styled(display, style)),
                 ])
             })
@@ -125,7 +118,7 @@ impl SettingsView {
         list_state.select(Some(app.settings_view.selected_index));
 
         let panel_style = if app.settings_view.sidebar_focused {
-            Style::default().fg(Color::DarkGray)
+            theme::MUTED
         } else {
             Style::default()
         };
@@ -137,7 +130,7 @@ impl SettingsView {
                     .title(" Settings ")
                     .border_style(panel_style),
             )
-            .highlight_style(Style::default().bg(Color::DarkGray));
+            .highlight_style(theme::HIGHLIGHT);
 
         f.render_stateful_widget(list, area, &mut list_state);
     }
