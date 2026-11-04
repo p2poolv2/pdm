@@ -365,7 +365,7 @@ mod tests {
 
         let action =
             explorer.handle_input(KeyEvent::new(KeyCode::Backspace, KeyModifiers::empty()));
-        assert!(matches!(action, crate::app::AppAction::None));
+        assert!(matches!(action, AppAction::None));
         assert_eq!(explorer.current_dir, base);
     }
 
@@ -382,7 +382,7 @@ mod tests {
         };
 
         let action = explorer.handle_input(KeyEvent::new(KeyCode::Esc, KeyModifiers::empty()));
-        assert!(matches!(action, crate::app::AppAction::CloseModal));
+        assert!(matches!(action, AppAction::CloseModal));
     }
 
     #[test]

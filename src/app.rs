@@ -10,7 +10,7 @@ use crate::components::p2pool_websocket::{
     LiveP2PoolEvent, LivePeerEvent, LiveShare, P2PoolWebSocketClient,
 };
 use crate::components::settings_view::SettingsView;
-use crate::settings::Settings;
+use crate::settings::{self, Settings};
 use crate::systemd::{P2PoolV2Service, ServiceAction, instance_from_config_path};
 use p2poolv2_config::Config as P2PoolConfig;
 use std::path::PathBuf;
@@ -163,7 +163,7 @@ impl App {
             p2pool_client,
             p2pool_websocket_client,
             home_dir: std::env::var("HOME").unwrap_or_default(),
-            config_dir: crate::settings::config_dir().unwrap_or_default(),
+            config_dir: settings::config_dir().unwrap_or_default(),
             p2pool_status_tab: 0,
             chain_info: None,
             p2pool_chain_info_error: None,
@@ -484,6 +484,7 @@ impl Default for App {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::systemd::user_p2pool_config_dir;
     use futures_util::StreamExt;
     use tokio::net::TcpListener;
     use tokio_tungstenite::accept_async;
@@ -782,7 +783,7 @@ mod tests {
     #[test]
     fn poll_p2pool_running_status_preserves_ok_and_err_results() {
         let mut app = App::new();
-        let config_dir = crate::systemd::user_p2pool_config_dir().unwrap();
+        let config_dir = user_p2pool_config_dir().unwrap();
         app.p2pool_conf_path = Some(config_dir.join("config-signet.toml"));
 
         app.p2pool_running_status_tx
@@ -813,7 +814,7 @@ mod tests {
     #[test]
     fn poll_p2pool_running_status_ignores_results_for_other_instances() {
         let mut app = App::new();
-        let config_dir = crate::systemd::user_p2pool_config_dir().unwrap();
+        let config_dir = user_p2pool_config_dir().unwrap();
         app.p2pool_conf_path = Some(config_dir.join("config-signet.toml"));
         app.p2pool_running_status = Some(Ok(true));
 

@@ -479,7 +479,6 @@ fn typed_toml_item_like(existing: &toml_edit::Item, new_value: &str) -> Result<t
 /// Saves P2Pool config by patching the original TOML file in-place.
 /// Uses toml_edit so comments and formatting are preserved.
 fn save_p2pool_config(path: &std::path::Path, cfg: &P2PoolConfig) -> Result<()> {
-    use pdm::config::flatten_config;
     use toml_edit::DocumentMut;
 
     // Read the original file so we preserve comments/ordering
