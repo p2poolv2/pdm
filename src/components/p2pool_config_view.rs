@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 use crate::app::{App, AppAction};
-use crate::p2poolv2_config::{FieldKind, P2PoolConfigEntry, flatten_config};
+use crate::config::{FieldKind, P2PoolConfigEntry, flatten_config};
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     prelude::*,
@@ -311,7 +311,7 @@ impl Default for P2PoolConfigView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::p2poolv2_config::{ConfigSection, FieldKind, P2PoolConfigEntry, P2PoolFieldSchema};
+    use crate::config::{ConfigSection, FieldKind, P2PoolConfigEntry, P2PoolFieldSchema};
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use p2poolv2_config::Config;
     use ratatui::{Terminal, backend::TestBackend};

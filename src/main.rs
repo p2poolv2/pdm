@@ -8,8 +8,9 @@ use pdm::app::{
     MAX_SIDEBAR_INDEX,
 };
 use pdm::components::settings_view::{FIELDS, FieldKind};
-use pdm::p2poolv2_config::{apply_edit as apply_p2pool_edit, flatten_config};
+use pdm::config::{apply_edit as apply_p2pool_edit, flatten_config};
 use pdm::settings::{load_settings, save_settings};
+use pdm::systemd::{P2PoolV2Service, ServiceAction, instance_from_config_path};
 use pdm::ui;
 use std::ops::ControlFlow;
 
@@ -83,6 +84,7 @@ where
         app.poll_share_info();
         app.poll_peer_info();
         app.poll_live_p2pool_events();
+        app.poll_p2pool_running_status();
         terminal.draw(|f| ui::ui(f, app))?;
 
         if event::poll(Duration::from_millis(100))?
@@ -150,6 +152,23 @@ fn dispatch_key(key: event::KeyEvent, app: &mut App) -> KeyOutcome {
                     app.p2pool_status_tab += 1;
                 }
                 AppAction::None
+            }
+            KeyCode::Char(key @ ('s' | 'x' | 'r')) if app.p2pool_status_tab == 3 => {
+                let action = match key {
+                    's' => ServiceAction::Start,
+                    'x' => ServiceAction::Stop,
+                    _ => ServiceAction::Restart,
+                };
+                if app
+                    .p2pool_conf_path
+                    .as_deref()
+                    .and_then(instance_from_config_path)
+                    .is_some()
+                {
+                    AppAction::P2PoolService(action)
+                } else {
+                    AppAction::None
+                }
             }
             k => sidebar_nav(k, app),
         },
@@ -393,6 +412,21 @@ fn handle_action(action: AppAction, app: &mut App) -> Result<ControlFlow<()>> {
             }
         }
 
+        AppAction::P2PoolService(action) => {
+            app.p2pool_service_error = None;
+            if let Some(instance) = app
+                .p2pool_conf_path
+                .as_deref()
+                .and_then(instance_from_config_path)
+            {
+                if let Err(error) = P2PoolV2Service::run(action, &instance) {
+                    app.p2pool_service_error = Some(format!("{} failed: {error}", action.label()));
+                } else {
+                    app.refresh_p2pool_running_status();
+                }
+            }
+        }
+
         AppAction::None => {}
     }
 
@@ -445,7 +479,6 @@ fn typed_toml_item_like(existing: &toml_edit::Item, new_value: &str) -> Result<t
 /// Saves P2Pool config by patching the original TOML file in-place.
 /// Uses toml_edit so comments and formatting are preserved.
 fn save_p2pool_config(path: &std::path::Path, cfg: &P2PoolConfig) -> Result<()> {
-    use pdm::p2poolv2_config::flatten_config;
     use toml_edit::DocumentMut;
 
     // Read the original file so we preserve comments/ordering
@@ -795,6 +828,61 @@ port = 46884
         dispatch_key(press(KeyCode::Right), &mut app);
 
         assert_eq!(app.p2pool_status_tab, MAX_P2POOL_STATUS_TAB);
+    }
+
+    #[test]
+    fn dispatch_key_p2pool_system_tab_without_config_ignores_service_controls() {
+        let mut app = App::new();
+        app.current_screen = CurrentScreen::P2PoolStatus;
+        app.p2pool_status_tab = 3;
+
+        assert!(matches!(
+            dispatch_key(press(KeyCode::Char('s')), &mut app),
+            KeyOutcome::Action(AppAction::None)
+        ));
+        assert!(matches!(
+            dispatch_key(press(KeyCode::Char('x')), &mut app),
+            KeyOutcome::Action(AppAction::None)
+        ));
+        assert!(matches!(
+            dispatch_key(press(KeyCode::Char('r')), &mut app),
+            KeyOutcome::Action(AppAction::None)
+        ));
+    }
+
+    #[test]
+    fn dispatch_key_p2pool_system_tab_maps_managed_service_controls() {
+        let home = std::env::var_os("HOME").expect("HOME is set for this test");
+        let mut app = App::new();
+        app.current_screen = CurrentScreen::P2PoolStatus;
+        app.p2pool_status_tab = 3;
+        app.p2pool_conf_path =
+            Some(std::path::PathBuf::from(home).join(".config/p2poolv2/config-signet.toml"));
+
+        assert!(matches!(
+            dispatch_key(press(KeyCode::Char('s')), &mut app),
+            KeyOutcome::Action(AppAction::P2PoolService(ServiceAction::Start))
+        ));
+        assert!(matches!(
+            dispatch_key(press(KeyCode::Char('x')), &mut app),
+            KeyOutcome::Action(AppAction::P2PoolService(ServiceAction::Stop))
+        ));
+        assert!(matches!(
+            dispatch_key(press(KeyCode::Char('r')), &mut app),
+            KeyOutcome::Action(AppAction::P2PoolService(ServiceAction::Restart))
+        ));
+    }
+
+    #[test]
+    fn dispatch_key_service_controls_are_ignored_on_other_p2pool_tabs() {
+        let mut app = App::new();
+        app.current_screen = CurrentScreen::P2PoolStatus;
+        app.p2pool_status_tab = 2;
+
+        assert!(matches!(
+            dispatch_key(press(KeyCode::Char('s')), &mut app),
+            KeyOutcome::Action(AppAction::None)
+        ));
     }
 
     #[test]

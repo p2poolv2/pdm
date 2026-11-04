@@ -1,0 +1,48 @@
+[Unit]
+Description=P2Poolv2 %i - Bitcoin Mining Pool
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+
+# User-owned state, log, and runtime directories for this instance.
+StateDirectory=p2poolv2/%i
+LogsDirectory=p2poolv2/%i
+RuntimeDirectory=p2poolv2/%i
+StateDirectoryMode=0750
+LogsDirectoryMode=0750
+RuntimeDirectoryMode=0750
+
+# Keep relative store and logging paths in the P2Pool config relative to state.
+# For example, ./logs/p2pool.log resolves under %S/p2poolv2/%i/logs/.
+WorkingDirectory=%S/p2poolv2/%i
+
+# Deployment installs the P2Pool binary in the user's local bin directory.
+# %E is the user configuration directory, matching PDM's XDG fallback.
+ExecStart=%h/.local/bin/p2poolv2 --config %E/p2poolv2/config-%i.toml
+
+Restart=on-failure
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=p2poolv2-%i
+LimitNOFILE=65536
+
+# Compatible hardening from the official service. These settings must be
+# validated against the installed P2Pool build and runtime dependencies.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+MemoryDenyWriteExecute=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=default.target

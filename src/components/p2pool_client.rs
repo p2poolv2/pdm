@@ -80,8 +80,12 @@ impl P2PoolClient {
     }
 
     fn from_api_config(config: &P2PoolApiConfig) -> Self {
-        let client =
-            P2PoolClient::with_base_url(format!("http://{}:{}", config.hostname, config.port));
+        let host = if config.hostname.parse::<std::net::Ipv6Addr>().is_ok() {
+            format!("[{}]", config.hostname)
+        } else {
+            config.hostname.clone()
+        };
+        let client = P2PoolClient::with_base_url(format!("http://{}:{}", host, config.port));
 
         if let Some((user, pass)) = api_auth_credentials(config) {
             client.with_auth(user, pass)
@@ -228,6 +232,17 @@ mod tests {
         let client = P2PoolClient::from_p2pool_config(&config);
 
         assert_eq!(client.base_url, "http://192.0.2.10:39001");
+    }
+
+    #[test]
+    fn from_p2pool_config_brackets_ipv6_literal_in_url() {
+        let mut config = loaded_p2pool_config();
+        config.api.hostname = "::1".to_string();
+        config.api.port = 46884;
+
+        let client = P2PoolClient::from_p2pool_config(&config);
+
+        assert_eq!(client.base_url, "http://[::1]:46884");
     }
 
     #[test]

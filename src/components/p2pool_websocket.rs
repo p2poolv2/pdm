@@ -80,10 +80,12 @@ impl P2PoolWebSocketClient {
     }
 
     fn from_api_config(config: &P2PoolApiConfig) -> Self {
-        let client = P2PoolWebSocketClient::with_base_url(format!(
-            "http://{}:{}",
-            config.hostname, config.port
-        ));
+        let host = if config.hostname.parse::<std::net::Ipv6Addr>().is_ok() {
+            format!("[{}]", config.hostname)
+        } else {
+            config.hostname.clone()
+        };
+        let client = P2PoolWebSocketClient::with_base_url(format!("http://{host}:{}", config.port));
 
         if let Some((user, pass)) = api_auth_credentials(config) {
             client.with_auth(user, pass)
@@ -547,6 +549,18 @@ mod tests {
         let url = client.ws_url_with_auth("/ws").unwrap();
 
         assert_eq!(url.as_str(), "ws://127.0.0.1:46884/ws");
+    }
+
+    #[test]
+    fn from_p2pool_config_brackets_ipv6_literal_in_websocket_url() {
+        let mut config = loaded_p2pool_config();
+        config.api.hostname = "::1".to_string();
+        config.api.port = 46884;
+
+        let client = P2PoolWebSocketClient::from_p2pool_config(&config);
+        let url = client.ws_url_with_auth("/ws").unwrap();
+
+        assert_eq!(url.as_str(), "ws://[::1]:46884/ws");
     }
 
     #[tokio::test]
