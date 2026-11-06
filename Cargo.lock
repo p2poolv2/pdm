@@ -210,7 +210,7 @@ dependencies = [
 [[package]]
 name = "bitcoindrpc"
 version = "0.16.2"
-source = "git+https://github.com/p2poolv2/p2poolv2#7ff2dc8643b1b3d826997cc402bd906d4314b76e"
+source = "git+https://github.com/p2poolv2/p2poolv2?tag=v0.16.2#61810c56a8ddc54727e7133d16cc2c16de3eb26a"
 dependencies = [
  "base64 0.23.1",
  "bitcoin",
@@ -1632,7 +1632,7 @@ dependencies = [
 [[package]]
 name = "p2poolv2_config"
 version = "0.16.2"
-source = "git+https://github.com/p2poolv2/p2poolv2#7ff2dc8643b1b3d826997cc402bd906d4314b76e"
+source = "git+https://github.com/p2poolv2/p2poolv2?tag=v0.16.2#61810c56a8ddc54727e7133d16cc2c16de3eb26a"
 dependencies = [
  "bitcoin",
  "bitcoindrpc",
@@ -1644,7 +1644,7 @@ dependencies = [
 [[package]]
 name = "p2poolv2_wallet"
 version = "0.16.2"
-source = "git+https://github.com/p2poolv2/p2poolv2#7ff2dc8643b1b3d826997cc402bd906d4314b76e"
+source = "git+https://github.com/p2poolv2/p2poolv2?tag=v0.16.2#61810c56a8ddc54727e7133d16cc2c16de3eb26a"
 dependencies = [
  "bitcoin",
  "serde",
@@ -2799,7 +2799,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",

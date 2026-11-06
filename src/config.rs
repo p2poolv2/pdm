@@ -628,8 +628,20 @@ pub fn apply_edit(cfg: &mut Config, index: usize, new_value: &str) -> Result<(),
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::P2POOLV2_VERSION;
     use p2poolv2_config::Config;
     use tempfile::tempdir;
+
+    /// The node release's own config.sample.toml must load. Bumping
+    /// P2POOLV2_VERSION requires adding that release's sample as a fixture.
+    #[test]
+    fn loads_config_sample_of_supported_node_release() {
+        let path = format!(
+            "{}/tests/fixtures/p2poolv2-v{P2POOLV2_VERSION}-config.sample.toml",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        Config::load(&path).expect("config.sample.toml of the supported node release must parse");
+    }
 
     fn make_config() -> Config {
         let dir = tempdir().unwrap();

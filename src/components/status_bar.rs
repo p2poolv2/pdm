@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+use crate::P2POOLV2_VERSION;
 use crate::app::{App, CurrentScreen};
 use crate::components::settings_view::{FIELDS, FieldKind};
 use crate::theme;
@@ -80,8 +81,15 @@ impl StatusBar {
             }
         }
 
+        let version = format!(" P2Poolv2 v{P2POOLV2_VERSION} ");
+        let [hints_area, version_area] =
+            Layout::horizontal([Constraint::Min(0), Constraint::Length(version.len() as u16)])
+                .areas(area);
+
         let bar = Paragraph::new(Line::from(spans));
-        f.render_widget(bar, area);
+        f.render_widget(bar, hints_area);
+        let version_label = Paragraph::new(version).style(theme::MUTED);
+        f.render_widget(version_label, version_area);
     }
 }
 
@@ -123,6 +131,13 @@ mod tests {
         assert!(output.contains("Navigate"));
         assert!(output.contains("Cancel"));
         assert!(output.contains("Parent folder"));
+    }
+
+    #[test]
+    fn shows_supported_p2poolv2_version() {
+        let app = App::new();
+        let output = render_status_bar(&app);
+        assert!(output.contains(&format!("P2Poolv2 v{P2POOLV2_VERSION}")));
     }
 
     #[test]

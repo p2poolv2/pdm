@@ -13,7 +13,7 @@ ratatui = "0.30.0"
 serde = { version = "1", features = ["derive"] }
 toml = "1"
 unicode-width = "0.2"
-p2poolv2_config = { git = "https://github.com/p2poolv2/p2poolv2", package = "p2poolv2_config", version = "0.16" }
+p2poolv2_config = { git = "https://github.com/p2poolv2/p2poolv2", tag = "v0.16.2", package = "p2poolv2_config" }
 bitcoin = "0.32.5"
 toml_edit = "0.25"
 reqwest = { version = "0.13", features = ["json", "query"] }

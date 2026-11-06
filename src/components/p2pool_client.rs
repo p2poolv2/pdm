@@ -52,7 +52,8 @@ pub struct UncleInfo {
     pub prev_blockhash: String,
     pub miner_address: String,
     pub timestamp: u64,
-    pub height: u64,
+    /// Null when the node does not know the uncle's height.
+    pub height: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -466,6 +467,52 @@ mod tests {
         assert_eq!(result.shares.len(), 1);
         assert_eq!(result.shares[0].height, 42);
         assert_eq!(result.shares[0].uncles.len(), 1);
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_fetch_recent_shares_accepts_uncle_without_height() {
+        let mut server = Server::new_async().await;
+
+        let mock = server
+            .mock("GET", "/shares")
+            .match_query(Matcher::UrlEncoded("num".into(), "1".into()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                json!({
+                    "from_height": 42,
+                    "to_height": 42,
+                    "shares": [
+                        {
+                            "blockhash": "0000share",
+                            "prev_blockhash": "ffffprev",
+                            "height": 42,
+                            "miner_bitcoin_address": "tb1qminer",
+                            "miner_address": "miner-address",
+                            "timestamp": 1700000000u64,
+                            "bits": "1d00ffff",
+                            "uncles": [
+                                {
+                                    "blockhash": "0000uncle",
+                                    "prev_blockhash": "ffffuncleprev",
+                                    "miner_bitcoin_address": "tb1quncle",
+                                    "miner_address": "uncle-miner",
+                                    "timestamp": 1699999999u64,
+                                    "height": null
+                                }
+                            ]
+                        }
+                    ]
+                })
+                .to_string(),
+            )
+            .create();
+
+        let client = P2PoolClient::with_base_url(server.url());
+        let result = client.fetch_recent_shares(1).await.unwrap();
+
+        assert_eq!(result.shares[0].uncles[0].height, None);
         mock.assert();
     }
 

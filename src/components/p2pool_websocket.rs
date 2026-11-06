@@ -29,7 +29,13 @@ pub struct ShareEventData {
     #[serde(deserialize_with = "deserialize_string_or_number")]
     pub bits: String,
     #[serde(default)]
-    pub uncles: Vec<String>,
+    pub uncles: Vec<UncleEventData>,
+}
+
+/// Uncle details sent with a share event. Only the blockhash is kept.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct UncleEventData {
+    pub blockhash: String,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -206,7 +212,11 @@ impl P2PoolWebSocketClient {
                                     miner_address: data.miner_address,
                                     timestamp: data.timestamp,
                                     bits: data.bits,
-                                    uncles: data.uncles,
+                                    uncles: data
+                                        .uncles
+                                        .into_iter()
+                                        .map(|uncle| uncle.blockhash)
+                                        .collect(),
                                 };
                                 let _ = tx.send(Ok(LiveP2PoolEvent::Share(live_share)));
                             }
@@ -333,12 +343,24 @@ mod tests {
                 "miner_address": "miner",
                 "timestamp": 1700000000,
                 "bits": "1d00ffff",
-                "uncles": ["aaaa"]
+                "uncles": [
+                    {
+                        "blockhash": "aaaa",
+                        "prev_blockhash": "bbbb",
+                        "miner_bitcoin_address": "tb1quncle",
+                        "miner_address": "uncle-miner",
+                        "timestamp": 1699999999,
+                        "height": null
+                    }
+                ]
             }
         }))
         .unwrap();
 
-        assert!(matches!(event, WebSocketEvent::Share(_)));
+        let WebSocketEvent::Share(data) = event else {
+            panic!("expected share event");
+        };
+        assert_eq!(data.uncles[0].blockhash, "aaaa");
     }
 
     #[test]
@@ -428,7 +450,7 @@ mod tests {
                             "miner_address": "miner",
                             "timestamp": 1700000000,
                             "bits": "1d00ffff",
-                            "uncles": ["aaaa"]
+                            "uncles": [{ "blockhash": "aaaa", "height": 41 }]
                         }
                     })
                     .to_string(),

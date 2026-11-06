@@ -29,7 +29,7 @@ TestBackend {
             "│                       ││                                                     │",
             "│                       ││                                                     │",
             "└───────────────────────┘└─────────────────────────────────────────────────────┘",
-            " ↑↓  Navigate sidebar   ←→  Switch tab   q  Quit                                ",
+            " ↑↓  Navigate sidebar   ←→  Switch tab   q  Quit               P2Poolv2 v0.16.2 ",
         ],
         styles: [
             x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
@@ -48,6 +48,7 @@ TestBackend {
             x: 40, y: 23, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD | REVERSED,
             x: 43, y: 23, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
             x: 50, y: 23, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+            x: 62, y: 23, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
         ]
     },
     scrollback: Buffer {

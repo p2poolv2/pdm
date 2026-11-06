@@ -534,7 +534,7 @@ mod tests {
                     prev_blockhash: format!("{blockhash}-uncle-prev-{index}"),
                     miner_address: miner_address.to_string(),
                     timestamp,
-                    height,
+                    height: Some(height),
                 })
                 .collect(),
         }

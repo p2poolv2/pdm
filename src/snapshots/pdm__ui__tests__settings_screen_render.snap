@@ -29,7 +29,7 @@ TestBackend {
             "│                       ││                                                     │",
             "│                       ││                                                     │",
             "└───────────────────────┘└─────────────────────────────────────────────────────┘",
-            " ↑↓  Navigate sidebar   Enter  Focus settings                                   ",
+            " ↑↓  Navigate sidebar   Enter  Focus settings                  P2Poolv2 v0.16.2 ",
         ],
         styles: [
             x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
@@ -128,6 +128,7 @@ TestBackend {
             x: 23, y: 23, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD | REVERSED,
             x: 30, y: 23, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
             x: 47, y: 23, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+            x: 62, y: 23, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
         ]
     },
     scrollback: Buffer {
