@@ -155,7 +155,7 @@ fn dispatch_key(key: event::KeyEvent, app: &mut App) -> KeyOutcome {
                 }
                 AppAction::None
             }
-            KeyCode::Char(key @ ('s' | 'x' | 'r')) if app.p2pool_status_tab == 3 => {
+            KeyCode::Char(key @ ('s' | 'x' | 'r')) if app.p2pool_status_tab == 4 => {
                 let action = match key {
                     's' => ServiceAction::Start,
                     'x' => ServiceAction::Stop,
@@ -853,10 +853,24 @@ port = 46884
         let home = std::env::var_os("HOME").expect("HOME is set for this test");
         let mut app = App::new();
         app.current_screen = CurrentScreen::P2PoolStatus;
-        app.p2pool_status_tab = 4;
+        app.p2pool_status_tab = 3;
         app.p2pool_conf_path =
             Some(std::path::PathBuf::from(home).join(".config/p2poolv2/config-signet.toml"));
 
+        assert!(matches!(
+            dispatch_key(press(KeyCode::Char('s')), &mut app),
+            KeyOutcome::Action(AppAction::None)
+        ));
+        assert!(matches!(
+            dispatch_key(press(KeyCode::Char('x')), &mut app),
+            KeyOutcome::Action(AppAction::None)
+        ));
+        assert!(matches!(
+            dispatch_key(press(KeyCode::Char('r')), &mut app),
+            KeyOutcome::Action(AppAction::None)
+        ));
+
+        app.p2pool_status_tab = 4;
         assert!(matches!(
             dispatch_key(press(KeyCode::Char('s')), &mut app),
             KeyOutcome::Action(AppAction::P2PoolService(ServiceAction::Start))

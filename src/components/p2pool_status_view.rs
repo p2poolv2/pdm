@@ -558,7 +558,6 @@ mod tests {
     use crate::components::p2pool_websocket::{LivePeerEvent, LiveShare};
     use crate::systemd::user_p2pool_config_dir;
     use ratatui::{Terminal, backend::TestBackend, prelude::Rect};
-    use std::path::PathBuf;
 
     const SHARE_TAB: usize = 1;
     const PEER_TAB: usize = 2;
@@ -1059,7 +1058,7 @@ mod tests {
     fn render_system_tab_shows_memory_rss_when_available() {
         let mut app = App::new();
         app.p2pool_status_tab = SYSTEM_TAB;
-        let config_dir = p2poolv2_service::user_p2pool_config_dir().unwrap();
+        let config_dir = user_p2pool_config_dir().unwrap();
         app.p2pool_conf_path = Some(config_dir.join("config-signet.toml"));
         app.p2pool_rss_bytes = Some(157_286_400);
 
@@ -1073,7 +1072,7 @@ mod tests {
     fn render_system_tab_shows_memory_rss_unavailable_when_none() {
         let mut app = App::new();
         app.p2pool_status_tab = SYSTEM_TAB;
-        let config_dir = p2poolv2_service::user_p2pool_config_dir().unwrap();
+        let config_dir = user_p2pool_config_dir().unwrap();
         app.p2pool_conf_path = Some(config_dir.join("config-signet.toml"));
         app.p2pool_rss_bytes = None;
 

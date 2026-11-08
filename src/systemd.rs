@@ -264,9 +264,15 @@ impl P2PoolV2Service {
         if output.status.success() {
             Ok(())
         } else {
+            let exit_status = output.status.code().map_or_else(
+                || "terminated by signal".to_string(),
+                |code| format!("exit code {code}"),
+            );
+            let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
             anyhow::bail!(
-                "systemctl --user {action} {service} failed: {}",
+                "systemctl --user {action} {service} failed ({exit_status}); stdout: '{}'; stderr: '{}'",
+                stdout.trim(),
                 stderr.trim()
             );
         }
@@ -390,6 +396,7 @@ mod tests {
     use super::*;
     use serial_test::serial;
     use std::fs;
+    use std::os::unix::fs::PermissionsExt;
     use tempfile::TempDir;
 
     #[cfg(unix)]
@@ -412,7 +419,7 @@ mod tests {
                     "echo inactive; exit 3"
                 },
                 if fail_actions {
-                    "echo permission denied >&2; exit 1"
+                    "echo job output; echo permission denied >&2; exit 1"
                 } else {
                     "exit 0"
                 }
@@ -726,9 +733,15 @@ mod tests {
 
         restore_path(old_path);
 
-        assert!(start_error.contains("start p2poolv2@signet failed: permission denied"));
-        assert!(stop_error.contains("stop p2poolv2@signet failed: permission denied"));
-        assert!(restart_error.contains("restart p2poolv2@signet failed: permission denied"));
+        assert!(start_error.contains(
+            "start p2poolv2@signet failed (exit code 1); stdout: 'job output'; stderr: 'permission denied'"
+        ));
+        assert!(stop_error.contains(
+            "stop p2poolv2@signet failed (exit code 1); stdout: 'job output'; stderr: 'permission denied'"
+        ));
+        assert!(restart_error.contains(
+            "restart p2poolv2@signet failed (exit code 1); stdout: 'job output'; stderr: 'permission denied'"
+        ));
         assert!(!running);
     }
 
