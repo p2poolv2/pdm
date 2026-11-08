@@ -11,8 +11,10 @@ use crate::components::p2pool_websocket::{
 };
 use crate::components::settings_view::SettingsView;
 use crate::settings::{self, Settings};
-use crate::systemd::{P2PoolV2Service, ServiceAction, instance_from_config_path};
-use crate::p2poolv2_service::{StorePathError, calculate_path_size, resolve_store_path, resolve_store_path};
+use crate::systemd::{
+    P2PoolV2Service, ServiceAction, StorageSizeError, StorePathError, calculate_path_size,
+    instance_from_config_path, resolve_store_path,
+};
 use p2poolv2_config::Config as P2PoolConfig;
 use std::path::PathBuf;
 use tokio::sync::mpsc;
@@ -521,9 +523,7 @@ impl App {
                                             size: Some(size),
                                             error: None,
                                         },
-                                        Err(
-                                            crate::p2poolv2_service::StorageSizeError::NotFound(_),
-                                        ) => P2PoolStorageStatus {
+                                        Err(StorageSizeError::NotFound(_)) => P2PoolStorageStatus {
                                             path: Some(path),
                                             size: None,
                                             error: None,

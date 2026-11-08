@@ -3,9 +3,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 use crate::app::{App, P2POOL_STATUS_TABS};
-use crate::systemd::instance_from_config_path;
+use crate::systemd::{format_size_bytes, instance_from_config_path};
 use crate::theme;
-use crate::p2poolv2_service::{P2PoolV2Service, format_size_bytes, instance_from_config_path};
+//use crate::p2poolv2_service::{};
 use ratatui::{
     prelude::*,
     widgets::{Block, Borders, Cell, Paragraph, Row, Table, Tabs, Wrap},
@@ -1059,7 +1059,7 @@ mod tests {
     fn render_system_tab_shows_memory_rss_when_available() {
         let mut app = App::new();
         app.p2pool_status_tab = SYSTEM_TAB;
-        let config_dir = crate::p2poolv2_service::user_p2pool_config_dir().unwrap();
+        let config_dir = p2poolv2_service::user_p2pool_config_dir().unwrap();
         app.p2pool_conf_path = Some(config_dir.join("config-signet.toml"));
         app.p2pool_rss_bytes = Some(157_286_400);
 
@@ -1073,7 +1073,7 @@ mod tests {
     fn render_system_tab_shows_memory_rss_unavailable_when_none() {
         let mut app = App::new();
         app.p2pool_status_tab = SYSTEM_TAB;
-        let config_dir = crate::p2poolv2_service::user_p2pool_config_dir().unwrap();
+        let config_dir = p2poolv2_service::user_p2pool_config_dir().unwrap();
         app.p2pool_conf_path = Some(config_dir.join("config-signet.toml"));
         app.p2pool_rss_bytes = None;
 
