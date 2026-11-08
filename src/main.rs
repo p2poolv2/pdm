@@ -113,9 +113,11 @@ fn dispatch_key(key: event::KeyEvent, app: &mut App) -> KeyOutcome {
 
     // Ctrl-C is always a hard exit.
     // 'q' is suppressed while a text-input field is active.
-    let text_input_active = app.current_screen == CurrentScreen::P2PoolConfig
+    let text_input_active = (app.current_screen == CurrentScreen::P2PoolConfig
         && !app.p2pool_config_view.sidebar_focused
-        && app.p2pool_config_view.editing;
+        && app.p2pool_config_view.editing)
+        || (app.current_screen == CurrentScreen::FileExplorer
+            && app.explorer.search_query.is_some());
 
     if (key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('c'))
         || (!text_input_active && key.code == KeyCode::Char('q'))
@@ -726,6 +728,18 @@ port = 46884
         let outcome = dispatch_key(press(KeyCode::Char('q')), &mut app);
 
         assert!(!matches!(outcome, KeyOutcome::Exit));
+    }
+
+    #[test]
+    fn dispatch_key_q_is_typed_while_file_explorer_search_is_active() {
+        let mut app = App::new();
+        app.current_screen = CurrentScreen::FileExplorer;
+        app.explorer.search_query = Some(String::new());
+
+        let outcome = dispatch_key(press(KeyCode::Char('q')), &mut app);
+
+        assert!(matches!(outcome, KeyOutcome::Action(AppAction::None)));
+        assert_eq!(app.explorer.search_query.as_deref(), Some("q"));
     }
 
     #[test]

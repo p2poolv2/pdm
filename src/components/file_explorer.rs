@@ -10,11 +10,11 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, ListState},
 };
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// `FileExplorer` maintains the current directory, a sorted list of entries,
 /// and the currently selected index. It supports navigating directories,
-/// moving the selection, and selecting files.
+/// searching filenames, moving the selection, and selecting files.
 #[derive(Clone)]
 pub struct FileExplorer {
     /// Current directory being explored.
@@ -25,6 +25,8 @@ pub struct FileExplorer {
     pub selected_index: usize,
     /// When true, the explorer is in directory-selection mode.
     pub allow_dir_select: bool,
+    /// Search query while search mode is active; an empty query shows all entries.
+    pub search_query: Option<String>,
 }
 
 impl Default for FileExplorer {
@@ -43,6 +45,7 @@ impl FileExplorer {
             files: Vec::new(),
             selected_index: 0,
             allow_dir_select: false,
+            search_query: None,
         };
         explorer.load_directory();
         explorer
@@ -52,9 +55,13 @@ impl FileExplorer {
     ///
     /// Directories are listed first, followed by files. If the directory
     /// has a parent, a virtual `..` entry is added to allow navigating upward.
+    /// Any active search query is cleared while search mode remains active.
     pub fn load_directory(&mut self) {
         self.files.clear();
         self.selected_index = 0;
+        if let Some(query) = &mut self.search_query {
+            query.clear();
+        }
 
         if self.allow_dir_select {
             self.files.push(self.current_dir.clone());
@@ -85,18 +92,80 @@ impl FileExplorer {
         }
     }
 
+    fn matches_search(&self, path: &Path, query: &str) -> bool {
+        let is_searchable = if self.allow_dir_select {
+            path.is_dir() && path != self.current_dir && !path.ends_with("..")
+        } else {
+            !path.is_dir()
+        };
+
+        is_searchable
+            && path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_lowercase()
+                .contains(query)
+    }
+
+    /// Returns indices of entries visible for the active search.
+    fn visible_indices(&self) -> Vec<usize> {
+        let Some(query) = self
+            .search_query
+            .as_deref()
+            .filter(|query| !query.is_empty())
+        else {
+            return (0..self.files.len()).collect();
+        };
+        let query = query.to_lowercase();
+
+        self.files
+            .iter()
+            .enumerate()
+            .filter_map(|(index, path)| {
+                let is_navigation_entry = path == &self.current_dir || path.ends_with("..");
+                let is_visible = if self.allow_dir_select {
+                    is_navigation_entry || self.matches_search(path, &query)
+                } else {
+                    path.is_dir() || self.matches_search(path, &query)
+                };
+                is_visible.then_some(index)
+            })
+            .collect()
+    }
+
+    fn has_matching_entries(&self) -> bool {
+        let Some(query) = self
+            .search_query
+            .as_deref()
+            .filter(|query| !query.is_empty())
+        else {
+            return true;
+        };
+        let query = query.to_lowercase();
+        self.files
+            .iter()
+            .any(|path| self.matches_search(path, &query))
+    }
+
     /// Moves the selection to the next entry.
     pub fn next(&mut self) {
-        if !self.files.is_empty() {
-            self.selected_index = (self.selected_index + 1) % self.files.len();
+        let visible_count = self.visible_indices().len();
+        if visible_count > 0 {
+            self.selected_index = if self.selected_index + 1 < visible_count {
+                self.selected_index + 1
+            } else {
+                0
+            };
         }
     }
 
     /// Moves the selection to the previous entry.
     pub fn previous(&mut self) {
-        if !self.files.is_empty() {
-            if self.selected_index == 0 {
-                self.selected_index = self.files.len() - 1;
+        let visible_count = self.visible_indices().len();
+        if visible_count > 0 {
+            if self.selected_index == 0 || self.selected_index >= visible_count {
+                self.selected_index = visible_count - 1;
             } else {
                 self.selected_index -= 1;
             }
@@ -109,11 +178,9 @@ impl FileExplorer {
     /// - If it is `..`, moves to the parent directory.
     /// - If it is a file, returns its path.
     pub fn select(&mut self) -> Option<PathBuf> {
-        if self.files.is_empty() {
-            return None;
-        }
-
-        let selected = self.files[self.selected_index].clone();
+        let visible_indices = self.visible_indices();
+        let selected_index = *visible_indices.get(self.selected_index)?;
+        let selected = self.files[selected_index].clone();
 
         if self.allow_dir_select && selected == self.current_dir {
             return Some(selected);
@@ -135,7 +202,20 @@ impl FileExplorer {
     }
 
     pub fn handle_input(&mut self, key: KeyEvent) -> AppAction {
+        let searching = self.search_query.is_some();
         match key.code {
+            KeyCode::Char('/') if !searching => {
+                self.search_query = Some(String::new());
+                self.selected_index = 0;
+                AppAction::None
+            }
+            KeyCode::Char(character) if searching && !character.is_control() => {
+                if let Some(query) = &mut self.search_query {
+                    query.push(character);
+                }
+                self.selected_index = 0;
+                AppAction::None
+            }
             KeyCode::Up => {
                 self.previous();
                 AppAction::None
@@ -150,11 +230,23 @@ impl FileExplorer {
                 }
                 AppAction::None
             }
+            KeyCode::Backspace if searching => {
+                if let Some(query) = &mut self.search_query {
+                    query.pop();
+                }
+                self.selected_index = 0;
+                AppAction::None
+            }
             KeyCode::Backspace => {
                 if let Some(parent) = self.current_dir.parent() {
                     self.current_dir = parent.to_path_buf();
                     self.load_directory();
                 }
+                AppAction::None
+            }
+            KeyCode::Esc if searching => {
+                self.search_query = None;
+                self.selected_index = 0;
                 AppAction::None
             }
             KeyCode::Esc => AppAction::CloseModal,
@@ -165,12 +257,12 @@ impl FileExplorer {
     pub fn render(f: &mut Frame, app: &mut App, area: Rect) {
         let allow_dir_select = app.explorer.allow_dir_select;
         let sentinel = app.explorer.current_dir.clone();
+        let visible_indices = app.explorer.visible_indices();
 
-        let files: Vec<ListItem> = app
-            .explorer
-            .files
+        let mut files: Vec<ListItem> = visible_indices
             .iter()
-            .map(|path| {
+            .map(|index| {
+                let path = &app.explorer.files[*index];
                 let display_name = if allow_dir_select && path == &sentinel {
                     "[✓ Use this directory]".to_string()
                 } else if path.ends_with("..") {
@@ -187,17 +279,39 @@ impl FileExplorer {
             })
             .collect();
 
-        let mut state = ListState::default();
-        state.select(Some(app.explorer.selected_index));
+        if let Some(query) = app
+            .explorer
+            .search_query
+            .as_deref()
+            .filter(|query| !query.is_empty())
+            && !app.explorer.has_matching_entries()
+        {
+            let entry_type = if allow_dir_select {
+                "directories"
+            } else {
+                "files"
+            };
+            files.push(ListItem::new(format!("No {entry_type} match '{query}'")));
+        }
 
-        let title = if allow_dir_select {
+        let mut state = ListState::default();
+        if app.explorer.selected_index < visible_indices.len() {
+            state.select(Some(app.explorer.selected_index));
+        }
+
+        let selection_label = if allow_dir_select {
+            "Select Directory"
+        } else {
+            "Select File"
+        };
+        let title = if let Some(query) = &app.explorer.search_query {
             format!(
-                " Select Directory (Current: {}) ",
+                " {selection_label} | Search: /{query} | Current: {} ",
                 app.explorer.current_dir.display()
             )
         } else {
             format!(
-                " Select File (Current: {}) ",
+                " {selection_label} | / to search | Current: {} ",
                 app.explorer.current_dir.display()
             )
         };
@@ -243,6 +357,7 @@ mod tests {
             files: vec![],
             selected_index: 0,
             allow_dir_select: false,
+            search_query: None,
         };
 
         explorer.load_directory();
@@ -257,6 +372,7 @@ mod tests {
             files: vec![PathBuf::from("a"), PathBuf::from("b")],
             selected_index: 0,
             allow_dir_select: false,
+            search_query: None,
         };
 
         explorer.next();
@@ -279,10 +395,101 @@ mod tests {
             files: vec![file.clone()],
             selected_index: 0,
             allow_dir_select: false,
+            search_query: Some("file".to_string()),
         };
 
         let result = explorer.select();
         assert_eq!(result, Some(file));
+    }
+
+    #[test]
+    fn search_matches_case_insensitive_partial_filenames() {
+        let dir = setup_temp_fs();
+        let mut explorer = FileExplorer {
+            current_dir: dir.clone(),
+            files: Vec::new(),
+            selected_index: 0,
+            allow_dir_select: false,
+            search_query: None,
+        };
+        explorer.load_directory();
+        explorer.search_query = Some(String::new());
+        assert_eq!(explorer.visible_indices().len(), explorer.files.len());
+        explorer.search_query = Some("FILE.TXT".to_string());
+
+        assert!(
+            explorer
+                .visible_indices()
+                .iter()
+                .any(|index| explorer.files[*index] == dir.join("file.txt"))
+        );
+        explorer.search_query = Some("ile.t".to_string());
+        assert!(
+            explorer
+                .visible_indices()
+                .iter()
+                .any(|index| explorer.files[*index] == dir.join("file.txt"))
+        );
+        assert!(explorer.has_matching_entries());
+    }
+
+    #[test]
+    fn directory_navigation_refreshes_entries_and_resets_search_query() {
+        let base = setup_temp_fs();
+        let folder = base.join("folder");
+        let nested_file = folder.join("inside.txt");
+        File::create(&nested_file).unwrap();
+        let mut explorer = FileExplorer {
+            current_dir: base,
+            files: Vec::new(),
+            selected_index: 0,
+            allow_dir_select: false,
+            search_query: None,
+        };
+        explorer.load_directory();
+        explorer.search_query = Some("no-such-file".to_string());
+        let visible_indices = explorer.visible_indices();
+        assert!(!explorer.has_matching_entries());
+        assert!(
+            visible_indices
+                .iter()
+                .all(|index| explorer.files[*index].is_dir())
+        );
+        let folder_index = visible_indices
+            .iter()
+            .position(|index| explorer.files[*index] == folder)
+            .expect("directories remain visible while searching");
+        explorer.selected_index = folder_index;
+
+        assert_eq!(explorer.select(), None);
+        assert_eq!(explorer.current_dir, folder);
+        assert_eq!(explorer.search_query.as_deref(), Some(""));
+        assert!(explorer.files.contains(&nested_file));
+    }
+
+    #[test]
+    fn slash_starts_search_backspace_edits_and_escape_exits() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let dir = setup_temp_fs();
+        let mut explorer = FileExplorer {
+            current_dir: dir,
+            files: Vec::new(),
+            selected_index: 0,
+            allow_dir_select: false,
+            search_query: None,
+        };
+        explorer.load_directory();
+
+        explorer.handle_input(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::empty()));
+        assert_eq!(explorer.search_query.as_deref(), Some(""));
+        explorer.handle_input(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::empty()));
+        explorer.handle_input(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::empty()));
+        explorer.handle_input(KeyEvent::new(KeyCode::Backspace, KeyModifiers::empty()));
+        assert_eq!(explorer.search_query.as_deref(), Some("a"));
+
+        explorer.handle_input(KeyEvent::new(KeyCode::Esc, KeyModifiers::empty()));
+        assert_eq!(explorer.search_query, None);
     }
 
     #[test]
@@ -296,6 +503,7 @@ mod tests {
             files: vec![],
             selected_index: 0,
             allow_dir_select: false,
+            search_query: None,
         };
 
         explorer.load_directory();
@@ -322,6 +530,7 @@ mod tests {
             files: vec![folder.clone()],
             selected_index: 0,
             allow_dir_select: false,
+            search_query: None,
         };
 
         let result = explorer.select();
@@ -343,6 +552,7 @@ mod tests {
             files: vec![PathBuf::from("a"), PathBuf::from("b"), PathBuf::from("c")],
             selected_index: 2,
             allow_dir_select: false,
+            search_query: None,
         };
 
         explorer.previous();
@@ -361,6 +571,7 @@ mod tests {
             files: vec![],
             selected_index: 0,
             allow_dir_select: false,
+            search_query: None,
         };
         explorer.load_directory();
 
@@ -380,6 +591,7 @@ mod tests {
             files: vec![],
             selected_index: 0,
             allow_dir_select: false,
+            search_query: None,
         };
 
         let action = explorer.handle_input(KeyEvent::new(KeyCode::Esc, KeyModifiers::empty()));
@@ -394,6 +606,7 @@ mod tests {
             files: Vec::new(),
             selected_index: 0,
             allow_dir_select: true,
+            search_query: None,
         };
         explorer.load_directory();
 
@@ -424,6 +637,7 @@ mod tests {
             files: Vec::new(),
             selected_index: 0,
             allow_dir_select: true,
+            search_query: None,
         };
         explorer.load_directory();
         // Select index 0 (sentinel)
@@ -435,12 +649,15 @@ mod tests {
     fn allow_dir_select_subdir_still_navigates() {
         let base = setup_temp_fs();
         let folder = base.join("folder");
+        let other = base.join("other");
+        fs::create_dir(&other).unwrap();
 
         let mut explorer = FileExplorer {
             current_dir: base.clone(),
             files: Vec::new(),
             selected_index: 0,
             allow_dir_select: true,
+            search_query: None,
         };
         explorer.load_directory();
 
@@ -456,6 +673,57 @@ mod tests {
         // Navigates into the subdir, does not return it.
         assert!(result.is_none());
         assert_eq!(explorer.current_dir, folder);
+    }
+
+    #[test]
+    fn directory_search_filters_by_name_and_keeps_navigation_entries() {
+        let base = setup_temp_fs();
+        let folder = base.join("folder");
+        let other = base.join("other");
+        fs::create_dir(&other).unwrap();
+        let mut explorer = FileExplorer {
+            current_dir: base.clone(),
+            files: Vec::new(),
+            selected_index: 0,
+            allow_dir_select: true,
+            search_query: None,
+        };
+        explorer.load_directory();
+        explorer.search_query = Some("FOLDER".to_string());
+
+        let visible_indices = explorer.visible_indices();
+        assert!(
+            visible_indices
+                .iter()
+                .any(|index| explorer.files[*index] == folder)
+        );
+        assert!(
+            visible_indices
+                .iter()
+                .all(|index| explorer.files[*index] != other)
+        );
+        assert!(
+            visible_indices
+                .iter()
+                .any(|index| explorer.files[*index] == base)
+        );
+        assert!(
+            visible_indices
+                .iter()
+                .any(|index| explorer.files[*index].ends_with(".."))
+        );
+        assert!(explorer.has_matching_entries());
+
+        explorer.selected_index = visible_indices
+            .iter()
+            .position(|index| explorer.files[*index] == folder)
+            .expect("matching directory must be visible");
+        assert_eq!(explorer.select(), None);
+        assert_eq!(explorer.current_dir, folder);
+        assert_eq!(explorer.search_query.as_deref(), Some(""));
+
+        explorer.search_query = Some("missing".to_string());
+        assert!(!explorer.has_matching_entries());
     }
 
     #[test]
@@ -490,5 +758,54 @@ mod tests {
         // The folder and file created by setup_temp_fs must appear with icons
         assert!(output.contains("folder") || output.contains("📁"));
         assert!(output.contains("file.txt") || output.contains("📄"));
+    }
+
+    #[test]
+    fn render_displays_search_query_and_no_match_messages() {
+        use crate::app::App;
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let base = setup_temp_fs();
+        let mut app = App::new();
+        app.explorer.current_dir = base;
+        app.explorer.load_directory();
+        app.explorer.search_query = Some("missing".to_string());
+
+        let mut terminal = Terminal::new(TestBackend::new(100, 24)).unwrap();
+        terminal
+            .draw(|frame| {
+                FileExplorer::render(frame, &mut app, frame.area());
+            })
+            .unwrap();
+        let output: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol().to_string())
+            .collect();
+
+        assert!(output.contains("Search: /missing"));
+        assert!(output.contains("No files match 'missing'"));
+
+        app.explorer.allow_dir_select = true;
+        app.explorer.load_directory();
+        app.explorer.search_query = Some("missing".to_string());
+        terminal
+            .draw(|frame| {
+                FileExplorer::render(frame, &mut app, frame.area());
+            })
+            .unwrap();
+        let output: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol().to_string())
+            .collect();
+
+        assert!(output.contains("Select Directory"));
+        assert!(output.contains("No directories match 'missing'"));
     }
 }
