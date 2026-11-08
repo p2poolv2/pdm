@@ -5,7 +5,6 @@
 use crate::app::{App, P2POOL_STATUS_TABS};
 use crate::systemd::{format_size_bytes, instance_from_config_path};
 use crate::theme;
-//use crate::p2poolv2_service::{};
 use ratatui::{
     prelude::*,
     widgets::{Block, Borders, Cell, Paragraph, Row, Table, Tabs, Wrap},
@@ -552,6 +551,7 @@ impl Default for P2PoolStatusView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::P2PoolStorageStatus;
     use crate::components::p2pool_client::{
         ChainInfo, PeerInfo, ShareInfo, SharesResponse, UncleInfo,
     };
@@ -647,6 +647,23 @@ mod tests {
     }
 
     #[test]
+    fn render_chain_info_shows_loading_when_configured_without_result() {
+        let mut app = App::new();
+        app.set_p2pool_config(
+            p2poolv2_config::Config::load(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/p2pool.toml"
+            ))
+            .unwrap(),
+        );
+
+        let output = render_view(&app);
+
+        assert!(output.contains("Loading chain info..."));
+        assert!(!output.contains("Select a P2Poolv2 config file"));
+    }
+
+    #[test]
     fn render_dispatches_share_info_for_tab_one() {
         let mut app = App::new();
         app.p2pool_status_tab = SHARE_TAB;
@@ -655,6 +672,28 @@ mod tests {
 
         assert!(output.contains("Difficulty"));
         assert!(output.contains("Uncles"));
+    }
+
+    #[test]
+    fn render_share_info_shows_waiting_when_configured_without_data() {
+        let mut app = App::new();
+        app.p2pool_status_tab = SHARE_TAB;
+        app.set_p2pool_config(
+            p2poolv2_config::Config::load(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/p2pool.toml"
+            ))
+            .unwrap(),
+        );
+
+        let output = render_view(&app);
+
+        assert_eq!(
+            P2PoolStatusView::share_empty_message(&app),
+            "Waiting for share data..."
+        );
+        assert!(output.contains("Waiting"));
+        assert!(!output.contains("Select a P2Poolv2 config file"));
     }
 
     #[test]
@@ -735,6 +774,87 @@ mod tests {
         assert!(output.contains("P2Poolv2 Storage"));
         assert!(output.contains("Store path"));
         assert!(output.contains("Store size"));
+    }
+
+    #[test]
+    fn render_storage_info_shows_calculated_path_and_size() {
+        let mut app = App::new();
+        app.p2pool_status_tab = STORAGE_TAB;
+        app.p2pool_storage_status = Some(P2PoolStorageStatus {
+            path: Some("data/store.db".into()),
+            size: Some(1024),
+            error: None,
+        });
+
+        let output = render_view(&app);
+
+        assert!(output.contains("Store path      : data/store.db"));
+        assert!(output.contains("Store size      : 1.00 KB"));
+    }
+
+    #[test]
+    fn render_storage_info_reports_store_not_created() {
+        let mut app = App::new();
+        app.p2pool_status_tab = STORAGE_TAB;
+        app.p2pool_storage_status = Some(P2PoolStorageStatus {
+            path: Some("data/store.db".into()),
+            size: None,
+            error: None,
+        });
+
+        let output = render_view(&app);
+
+        assert!(output.contains("Store size      : Store not created yet"));
+    }
+
+    #[test]
+    fn render_storage_info_shows_error_without_stale_path() {
+        let mut app = App::new();
+        app.p2pool_status_tab = STORAGE_TAB;
+        app.p2pool_storage_status = Some(P2PoolStorageStatus {
+            path: None,
+            size: None,
+            error: Some("permission denied".to_string()),
+        });
+
+        let output = render_view(&app);
+
+        assert!(output.contains("Storage unavailable: permission denied"));
+        assert!(!output.contains("Store size      :"));
+    }
+
+    #[test]
+    fn render_storage_info_shows_unavailable_status_without_path() {
+        let mut app = App::new();
+        app.p2pool_status_tab = STORAGE_TAB;
+        app.p2pool_storage_status = Some(P2PoolStorageStatus {
+            path: None,
+            size: None,
+            error: None,
+        });
+
+        let output = render_view(&app);
+
+        assert!(output.contains("Store path      : unavailable"));
+        assert!(output.contains("Store size      : unavailable"));
+    }
+
+    #[test]
+    fn render_storage_info_shows_loading_when_configured_without_result() {
+        let mut app = App::new();
+        app.p2pool_status_tab = STORAGE_TAB;
+        app.set_p2pool_config(
+            p2poolv2_config::Config::load(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/p2pool.toml"
+            ))
+            .unwrap(),
+        );
+
+        let output = render_view(&app);
+
+        assert!(output.contains("Loading storage info..."));
+        assert!(!output.contains("Store path      : unavailable"));
     }
 
     #[test]
@@ -1052,6 +1172,11 @@ mod tests {
             P2PoolStatusView::format_timestamp(1_700_000_000_000),
             "11/14/2023, 10:13:20 PM"
         );
+    }
+
+    #[test]
+    fn civil_from_days_handles_negative_era_leap_day() {
+        assert_eq!(P2PoolStatusView::civil_from_days(-719_469), (0, 2, 29));
     }
 
     #[test]

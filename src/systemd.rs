@@ -552,6 +552,40 @@ mod tests {
 
     #[test]
     #[serial]
+    #[cfg(target_os = "linux")]
+    fn memory_rss_bytes_uses_proc_fallback_for_live_process() -> Result<()> {
+        let process_id = std::process::id();
+        let sentinel = u64::MAX.to_string();
+        let process_id_string = process_id.to_string();
+        let (_dir, old_path) = fake_systemctl_show(&[
+            ("MemoryCurrent", &sentinel),
+            ("MainPID", &process_id_string),
+        ]);
+
+        let result = P2PoolV2Service::memory_rss_bytes("signet");
+        restore_path(old_path);
+
+        assert!(result?.is_some_and(|bytes| bytes > 0));
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn memory_rss_bytes_propagates_systemctl_show_failure() {
+        let (_dir, old_path) = fake_systemctl_show(&[("OtherProperty", "value")]);
+
+        let result = P2PoolV2Service::memory_rss_bytes("signet");
+        restore_path(old_path);
+
+        let error = result.unwrap_err().to_string();
+        assert!(
+            error.contains("failed: unknown property MemoryCurrent"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    #[serial]
     fn memory_rss_bytes_sentinel_with_main_pid_zero_returns_none() -> Result<()> {
         let sentinel = u64::MAX.to_string();
         let (_dir, old_path) =
@@ -668,6 +702,25 @@ mod tests {
         assert!(
             err.to_string().contains("unexpected VmRSS format"),
             "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn rss_from_proc_root_invalid_value_returns_parse_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let proc_dir = dir.path().join("9");
+        fs::create_dir_all(&proc_dir).unwrap();
+        fs::write(
+            proc_dir.join("status"),
+            "Name:\tp2poolv2\nVmRSS:\tnot-a-number kB\n",
+        )
+        .unwrap();
+
+        let error =
+            P2PoolV2Service::rss_from_proc_root(9, dir.path().to_str().unwrap()).unwrap_err();
+        assert!(
+            error.to_string().contains("could not parse VmRSS value"),
+            "unexpected error: {error}"
         );
     }
 
@@ -878,6 +931,62 @@ mod tests {
             err,
             StorePathError::UnmanagedRelativePath("./store.db".to_string())
         );
+    }
+
+    #[test]
+    fn resolve_store_path_uses_absolute_store_path_without_config_path() {
+        let mut config = p2poolv2_config::Config::load(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/p2pool.toml"
+        ))
+        .unwrap();
+        config.store.path = "/var/lib/p2pool/store.db".to_string();
+
+        let resolved = resolve_store_path(&config, None).unwrap();
+
+        assert_eq!(resolved, PathBuf::from("/var/lib/p2pool/store.db"));
+    }
+
+    #[test]
+    fn resolve_store_path_resolves_managed_relative_store_path() {
+        let mut config = p2poolv2_config::Config::load(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/p2pool.toml"
+        ))
+        .unwrap();
+        config.store.path = "./store.db".to_string();
+        let config_path = user_p2pool_config_dir().unwrap().join("config-signet.toml");
+        let expected = user_p2pool_state_dir("signet").unwrap().join("./store.db");
+
+        let resolved = resolve_store_path(&config, Some(&config_path)).unwrap();
+
+        assert_eq!(resolved, expected);
+    }
+
+    #[test]
+    fn resolve_store_path_rejects_unmanaged_relative_store_path() {
+        let mut config = p2poolv2_config::Config::load(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/p2pool.toml"
+        ))
+        .unwrap();
+        config.store.path = "./store.db".to_string();
+
+        let error = resolve_store_path(&config, None).unwrap_err();
+
+        assert_eq!(
+            error,
+            StorePathError::UnmanagedRelativePath("./store.db".to_string())
+        );
+    }
+
+    #[test]
+    fn format_size_bytes_formats_each_supported_unit() {
+        assert_eq!(format_size_bytes(512), "512 B");
+        assert_eq!(format_size_bytes(1024), "1.00 KB");
+        assert_eq!(format_size_bytes(1024 * 1024), "1.00 MB");
+        assert_eq!(format_size_bytes(1024 * 1024 * 1024), "1.00 GB");
+        assert_eq!(format_size_bytes(1024 * 1024 * 1024 * 1024), "1.00 TB");
     }
 
     #[test]
