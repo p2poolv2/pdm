@@ -11,7 +11,10 @@ use crate::components::p2pool_websocket::{
 };
 use crate::components::settings_view::SettingsView;
 use crate::settings::{self, Settings};
-use crate::systemd::{P2PoolV2Service, ServiceAction, instance_from_config_path};
+use crate::systemd::{
+    P2PoolV2Service, ServiceAction, StorageSizeError, StorePathError, calculate_path_size,
+    instance_from_config_path, resolve_store_path,
+};
 use p2poolv2_config::Config as P2PoolConfig;
 use std::path::PathBuf;
 use tokio::sync::mpsc;
@@ -33,7 +36,8 @@ pub const BITCOIN_STATUS_TABS: &[&str] = &["Chain Info", "Peers"];
 pub const MAX_BITCOIN_STATUS_TAB: usize = BITCOIN_STATUS_TABS.len() - 1;
 
 /// Tab labels for the P2Pool Status view
-pub const P2POOL_STATUS_TABS: &[&str] = &["Chain Info", "Shares", "Peers Info", "System"];
+pub const P2POOL_STATUS_TABS: &[&str] =
+    &["Chain Info", "Shares", "Peers Info", "Storage", "System"];
 
 pub const MAX_P2POOL_STATUS_TAB: usize = P2POOL_STATUS_TABS.len() - 1;
 
@@ -81,6 +85,13 @@ pub enum AppAction {
     ClearSettingsField(usize),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct P2PoolStorageStatus {
+    pub path: Option<PathBuf>,
+    pub size: Option<u64>,
+    pub error: Option<String>,
+}
+
 pub struct App {
     pub current_screen: CurrentScreen,
     pub sidebar_index: usize,
@@ -106,6 +117,10 @@ pub struct App {
     pub chain_info: Option<ChainInfo>,
     pub p2pool_chain_info_error: Option<String>,
     pub p2pool_service_error: Option<String>,
+    pub p2pool_storage_status: Option<P2PoolStorageStatus>,
+    /// Current RSS of the P2Poolv2 service process in bytes, or `None` when
+    /// the service is not running or the value is not yet available.
+    pub p2pool_rss_bytes: Option<u64>,
     pub share_info: Option<SharesResponse>,
     pub p2pool_share_info_error: Option<String>,
     pub peer_info: Option<Vec<PeerInfo>>,
@@ -133,6 +148,10 @@ pub struct App {
     pub share_info_rx: mpsc::UnboundedReceiver<anyhow::Result<SharesResponse>>,
     pub peer_info_tx: mpsc::UnboundedSender<anyhow::Result<Vec<PeerInfo>>>,
     pub peer_info_rx: mpsc::UnboundedReceiver<anyhow::Result<Vec<PeerInfo>>>,
+    pub p2pool_storage_tx: mpsc::UnboundedSender<anyhow::Result<P2PoolStorageStatus>>,
+    pub p2pool_storage_rx: mpsc::UnboundedReceiver<anyhow::Result<P2PoolStorageStatus>>,
+    pub p2pool_rss_tx: mpsc::UnboundedSender<anyhow::Result<Option<u64>>>,
+    pub p2pool_rss_rx: mpsc::UnboundedReceiver<anyhow::Result<Option<u64>>>,
 }
 
 impl App {
@@ -142,6 +161,8 @@ impl App {
         let (bitcoin_chain_info_tx, bitcoin_chain_info_rx) = mpsc::unbounded_channel();
         let (peer_info_tx, peer_info_rx) = mpsc::unbounded_channel();
         let (share_info_tx, share_info_rx) = mpsc::unbounded_channel();
+        let (p2pool_storage_tx, p2pool_storage_rx) = mpsc::unbounded_channel();
+        let (p2pool_rss_tx, p2pool_rss_rx) = mpsc::unbounded_channel();
         let (p2pool_live_tx, p2pool_live_rx) = mpsc::unbounded_channel();
         let (p2pool_running_status_tx, p2pool_running_status_rx) = mpsc::unbounded_channel();
         let p2pool_client = P2PoolClient::new();
@@ -168,6 +189,8 @@ impl App {
             chain_info: None,
             p2pool_chain_info_error: None,
             p2pool_service_error: None,
+            p2pool_storage_status: None,
+            p2pool_rss_bytes: None,
             share_info: None,
             p2pool_share_info_error: None,
             peer_info: None,
@@ -190,6 +213,10 @@ impl App {
             share_info_rx,
             peer_info_tx,
             peer_info_rx,
+            p2pool_storage_tx,
+            p2pool_storage_rx,
+            p2pool_rss_tx,
+            p2pool_rss_rx,
         }
     }
 
@@ -199,6 +226,13 @@ impl App {
         app.p2pool_websocket_client = client.websocket_client();
         app.p2pool_client = client;
         app
+    }
+
+    pub fn resolve_store_path(&self) -> Result<PathBuf, StorePathError> {
+        let Some(config) = self.p2pool_config.as_ref() else {
+            return Err(StorePathError::ConfigMissing);
+        };
+        resolve_store_path(config, self.p2pool_conf_path.as_deref())
     }
 
     pub fn set_p2pool_config(&mut self, config: P2PoolConfig) {
@@ -237,6 +271,8 @@ impl App {
         self.p2pool_share_info_error = None;
         self.peer_info = None;
         self.p2pool_peer_info_error = None;
+        self.p2pool_storage_status = None;
+        self.p2pool_rss_bytes = None;
         self.live_shares.clear();
         self.live_peer_events.clear();
         self.p2pool_live_error = None;
@@ -302,6 +338,30 @@ impl App {
                     self.p2pool_share_info_error = Some(e.to_string());
                 }
             }
+        }
+    }
+
+    pub fn poll_storage_status(&mut self) {
+        while let Ok(result) = self.p2pool_storage_rx.try_recv() {
+            match result {
+                Ok(status) => {
+                    self.p2pool_storage_status = Some(status);
+                }
+                Err(e) => {
+                    self.p2pool_storage_status = Some(P2PoolStorageStatus {
+                        path: None,
+                        size: None,
+                        error: Some(e.to_string()),
+                    });
+                }
+            }
+        }
+    }
+
+    /// Drains any pending RSS results from the background polling task.
+    pub fn poll_rss_bytes(&mut self) {
+        while let Ok(result) = self.p2pool_rss_rx.try_recv() {
+            self.p2pool_rss_bytes = result.unwrap_or_default();
         }
     }
 
@@ -420,6 +480,14 @@ impl App {
                 let websocket_client = self.p2pool_websocket_client.clone();
                 let live_tx = self.p2pool_live_tx.clone();
                 let start_live_stream = !self.p2pool_live_stream_started;
+                let storage_tx = self.p2pool_storage_tx.clone();
+                let storage_config = self.p2pool_config.clone();
+                let storage_conf_path = self.p2pool_conf_path.clone();
+                let rss_tx = self.p2pool_rss_tx.clone();
+                let rss_instance = self
+                    .p2pool_conf_path
+                    .as_deref()
+                    .and_then(instance_from_config_path);
 
                 if let Ok(handle) = tokio::runtime::Handle::try_current() {
                     handle.spawn(async move {
@@ -437,6 +505,43 @@ impl App {
                         let _ = peer_tx.send(res.map_err(anyhow::Error::from));
                     });
 
+                    handle.spawn(async move {
+                        let status = match storage_config.as_ref() {
+                            None => P2PoolStorageStatus {
+                                path: None,
+                                size: None,
+                                error: Some("No P2Pool config loaded".to_string()),
+                            },
+                            Some(config) => {
+                                match resolve_store_path(config, storage_conf_path.as_deref()) {
+                                    Ok(path) => match calculate_path_size(&path) {
+                                        Ok(size) => P2PoolStorageStatus {
+                                            path: Some(path),
+                                            size: Some(size),
+                                            error: None,
+                                        },
+                                        Err(StorageSizeError::NotFound(_)) => P2PoolStorageStatus {
+                                            path: Some(path),
+                                            size: None,
+                                            error: None,
+                                        },
+                                        Err(err) => P2PoolStorageStatus {
+                                            path: Some(path),
+                                            size: None,
+                                            error: Some(err.to_string()),
+                                        },
+                                    },
+                                    Err(err) => P2PoolStorageStatus {
+                                        path: None,
+                                        size: None,
+                                        error: Some(err.to_string()),
+                                    },
+                                }
+                            }
+                        };
+                        let _ = storage_tx.send(Ok(status));
+                    });
+
                     if start_live_stream {
                         self.p2pool_live_stream_started = true;
                         let task = handle.spawn(async move {
@@ -450,7 +555,23 @@ impl App {
                         self.live_stream_task = Some(task);
                     }
 
-                    self.refresh_p2pool_running_status();
+                    // Spawn a looping task that polls memory RSS every 2 s.
+                    // Only runs when the config path maps to a managed instance.
+                    // The loop exits automatically when the receiver (App) is
+                    // dropped or replaced — a failed send signals closure.
+                    if let Some(instance) = rss_instance {
+                        handle.spawn(async move {
+                            let mut interval =
+                                tokio::time::interval(std::time::Duration::from_secs(2));
+                            loop {
+                                interval.tick().await;
+                                let result = P2PoolV2Service::memory_rss_bytes(&instance);
+                                if rss_tx.send(result).is_err() {
+                                    break;
+                                }
+                            }
+                        });
+                    }
                 }
             }
         }
@@ -716,6 +837,68 @@ mod tests {
         assert!(!app.p2pool_live_stream_started);
     }
 
+    #[tokio::test]
+    async fn replacing_or_clearing_config_aborts_live_stream_task() {
+        let config = P2PoolConfig::load(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/p2pool.toml"
+        ))
+        .unwrap();
+        let mut app = App::new();
+        app.set_p2pool_config(config);
+
+        let refresh_task = tokio::spawn(std::future::pending::<()>());
+        let refresh_abort_handle = refresh_task.abort_handle();
+        app.live_stream_task = Some(refresh_task);
+
+        app.refresh_p2pool_clients_from_config();
+        tokio::task::yield_now().await;
+
+        assert!(refresh_abort_handle.is_finished());
+        assert!(app.live_stream_task.is_none());
+
+        let clear_task = tokio::spawn(std::future::pending::<()>());
+        let clear_abort_handle = clear_task.abort_handle();
+        app.live_stream_task = Some(clear_task);
+
+        app.clear_p2pool_config();
+        tokio::task::yield_now().await;
+
+        assert!(clear_abort_handle.is_finished());
+        assert!(app.live_stream_task.is_none());
+        assert!(app.p2pool_config.is_none());
+    }
+
+    #[test]
+    fn toggle_menu_clears_config_editor_and_status_when_p2pool_config_is_missing() {
+        let mut app = App::new();
+        app.current_screen = CurrentScreen::P2PoolConfig;
+        app.sidebar_index = 3;
+        app.p2pool_config_view.warning_message = Some("stale warning".to_string());
+        app.p2pool_config_view.save_message = Some("stale save".to_string());
+        app.p2pool_config_view.editing = true;
+        app.p2pool_config_view.edit_input = "unfinished edit".to_string();
+        app.chain_info = Some(ChainInfo {
+            genesis_blockhash: None,
+            chain_tip_height: Some(42),
+            total_work: "work".to_string(),
+            chain_tip_blockhash: None,
+        });
+        app.p2pool_rss_bytes = Some(1024);
+        app.p2pool_running_status = Some(Ok(true));
+
+        app.toggle_menu();
+
+        assert_eq!(app.current_screen, CurrentScreen::P2PoolStatus);
+        assert!(app.p2pool_config_view.warning_message.is_none());
+        assert!(app.p2pool_config_view.save_message.is_none());
+        assert!(!app.p2pool_config_view.editing);
+        assert!(app.p2pool_config_view.edit_input.is_empty());
+        assert!(app.chain_info.is_none());
+        assert_eq!(app.p2pool_rss_bytes, None);
+        assert_eq!(app.p2pool_running_status, None);
+    }
+
     #[test]
     fn fetch_bitcoin_chain_info_clears_state_without_configured_p2pool_config() {
         let mut app = App::new();
@@ -770,6 +953,130 @@ mod tests {
 
         assert!(event.is_err());
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn new_with_client_uses_injected_api_endpoint() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("GET", "/chain_info")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(serde_json::json!({ "total_work": "injected endpoint" }).to_string())
+            .create();
+        let client = P2PoolClient::with_base_url(server.url());
+
+        let app = App::new_with_client(client);
+        let chain_info = app.p2pool_client.fetch_chain_info().await.unwrap();
+
+        assert_eq!(chain_info.total_work, "injected endpoint");
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn toggle_menu_fetches_status_and_reports_unmanaged_storage_path() {
+        let mut server = mockito::Server::new_async().await;
+        let server_url = url::Url::parse(&server.url()).unwrap();
+        let chain_mock = server
+            .mock("GET", "/chain_info")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(serde_json::json!({ "total_work": "observed work" }).to_string())
+            .create();
+        let shares_mock = server
+            .mock("GET", "/shares")
+            .match_query(mockito::Matcher::UrlEncoded("num".into(), "10".into()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                serde_json::json!({
+                    "from_height": 1,
+                    "to_height": 2,
+                    "shares": []
+                })
+                .to_string(),
+            )
+            .create();
+        let peers_mock = server
+            .mock("GET", "/peers")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body("[]")
+            .create();
+
+        let mut config = P2PoolConfig::load(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/p2pool.toml"
+        ))
+        .unwrap();
+        config.api.hostname = server_url.host_str().unwrap().to_string();
+        config.api.port = server_url.port().unwrap();
+
+        let mut app = App::new();
+        app.set_p2pool_config(config);
+        app.sidebar_index = 3;
+
+        app.toggle_menu();
+
+        assert_eq!(app.current_screen, CurrentScreen::P2PoolStatus);
+        assert!(app.p2pool_live_stream_started);
+
+        let chain_info =
+            tokio::time::timeout(std::time::Duration::from_secs(2), app.chain_info_rx.recv())
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+        assert_eq!(chain_info.total_work, "observed work");
+
+        let share_info =
+            tokio::time::timeout(std::time::Duration::from_secs(2), app.share_info_rx.recv())
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+        assert_eq!(share_info.from_height, 1);
+        assert_eq!(share_info.to_height, 2);
+
+        let peer_info =
+            tokio::time::timeout(std::time::Duration::from_secs(2), app.peer_info_rx.recv())
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+        assert!(peer_info.is_empty());
+
+        let storage_status = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            app.p2pool_storage_rx.recv(),
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+        assert!(storage_status.path.is_none());
+        assert!(
+            storage_status
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("unmanaged relative store path"))
+        );
+
+        let live_result =
+            tokio::time::timeout(std::time::Duration::from_secs(2), app.p2pool_live_rx.recv())
+                .await
+                .unwrap()
+                .unwrap();
+        assert!(live_result.is_err());
+        app.p2pool_live_tx.send(live_result).unwrap();
+        app.poll_live_p2pool_events();
+        assert!(!app.p2pool_live_stream_started);
+        assert!(app.p2pool_live_error.is_some());
+
+        chain_mock.assert();
+        shares_mock.assert();
+        peers_mock.assert();
+        app.clear_p2pool_config();
     }
 
     #[test]
@@ -833,5 +1140,107 @@ mod tests {
             .unwrap();
         app.poll_p2pool_running_status();
         assert_eq!(app.p2pool_running_status, None);
+    }
+
+    #[test]
+    fn app_resolve_store_path_returns_config_missing_when_no_config() {
+        let app = App::new();
+        let err = app.resolve_store_path().unwrap_err();
+        assert_eq!(err, StorePathError::ConfigMissing);
+        assert_eq!(err.to_string(), "No P2Pool config loaded");
+    }
+
+    #[test]
+    fn app_resolve_store_path_uses_loaded_absolute_path() {
+        let mut config = P2PoolConfig::load(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/p2pool.toml"
+        ))
+        .unwrap();
+        config.store.path = "/var/lib/p2pool/store.db".to_string();
+
+        let mut app = App::new();
+        app.set_p2pool_config(config);
+
+        let resolved = app.resolve_store_path().unwrap();
+
+        assert_eq!(resolved, PathBuf::from("/var/lib/p2pool/store.db"));
+    }
+
+    #[test]
+    fn poll_storage_status_stores_successful_result() {
+        let mut app = App::new();
+        let status = P2PoolStorageStatus {
+            path: Some(PathBuf::from("/tmp/store.db")),
+            size: Some(2048),
+            error: None,
+        };
+        app.p2pool_storage_tx.send(Ok(status.clone())).unwrap();
+
+        app.poll_storage_status();
+
+        assert_eq!(app.p2pool_storage_status, Some(status));
+    }
+
+    #[test]
+    fn poll_storage_status_converts_error_to_unavailable_status() {
+        let mut app = App::new();
+        app.p2pool_storage_status = Some(P2PoolStorageStatus {
+            path: Some(PathBuf::from("/tmp/old-store.db")),
+            size: Some(1024),
+            error: None,
+        });
+        app.p2pool_storage_tx
+            .send(Err(anyhow::anyhow!("permission denied")))
+            .unwrap();
+
+        app.poll_storage_status();
+
+        assert_eq!(
+            app.p2pool_storage_status,
+            Some(P2PoolStorageStatus {
+                path: None,
+                size: None,
+                error: Some("permission denied".to_string()),
+            })
+        );
+    }
+
+    #[test]
+    fn poll_rss_bytes_stores_valid_byte_count() {
+        let mut app = App::new();
+        app.p2pool_rss_tx.send(Ok(Some(52_428_800))).unwrap();
+
+        app.poll_rss_bytes();
+
+        assert_eq!(app.p2pool_rss_bytes, Some(52_428_800));
+    }
+
+    #[test]
+    fn poll_rss_bytes_error_result_sets_none() {
+        let mut app = App::new();
+        app.p2pool_rss_bytes = Some(12345);
+        app.p2pool_rss_tx
+            .send(Err(anyhow::anyhow!("systemctl failed")))
+            .unwrap();
+
+        app.poll_rss_bytes();
+
+        assert_eq!(app.p2pool_rss_bytes, None);
+    }
+
+    #[test]
+    fn poll_rss_bytes_drains_to_last_value() {
+        let mut app = App::new();
+        // Queue two updates: a valid value then an error.
+        app.p2pool_rss_tx.send(Ok(Some(1024))).unwrap();
+        app.p2pool_rss_tx
+            .send(Err(anyhow::anyhow!("gone")))
+            .unwrap();
+
+        app.poll_rss_bytes();
+
+        // The last message wins — error clears to None.
+        assert_eq!(app.p2pool_rss_bytes, None);
     }
 }
