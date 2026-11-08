@@ -361,10 +361,7 @@ impl App {
     /// Drains any pending RSS results from the background polling task.
     pub fn poll_rss_bytes(&mut self) {
         while let Ok(result) = self.p2pool_rss_rx.try_recv() {
-            self.p2pool_rss_bytes = match result {
-                Ok(bytes) => bytes,
-                Err(_) => None,
-            };
+            self.p2pool_rss_bytes = result.unwrap_or_default();
         }
     }
 
