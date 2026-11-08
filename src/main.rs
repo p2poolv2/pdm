@@ -83,6 +83,8 @@ where
         app.poll_chain_info();
         app.poll_share_info();
         app.poll_peer_info();
+        app.poll_storage_status();
+        app.poll_rss_bytes();
         app.poll_live_p2pool_events();
         app.poll_p2pool_running_status();
         terminal.draw(|f| ui::ui(f, app))?;
@@ -111,9 +113,11 @@ fn dispatch_key(key: event::KeyEvent, app: &mut App) -> KeyOutcome {
 
     // Ctrl-C is always a hard exit.
     // 'q' is suppressed while a text-input field is active.
-    let text_input_active = app.current_screen == CurrentScreen::P2PoolConfig
+    let text_input_active = (app.current_screen == CurrentScreen::P2PoolConfig
         && !app.p2pool_config_view.sidebar_focused
-        && app.p2pool_config_view.editing;
+        && app.p2pool_config_view.editing)
+        || (app.current_screen == CurrentScreen::FileExplorer
+            && app.explorer.search_query.is_some());
 
     if (key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('c'))
         || (!text_input_active && key.code == KeyCode::Char('q'))
@@ -153,7 +157,7 @@ fn dispatch_key(key: event::KeyEvent, app: &mut App) -> KeyOutcome {
                 }
                 AppAction::None
             }
-            KeyCode::Char(key @ ('s' | 'x' | 'r')) if app.p2pool_status_tab == 3 => {
+            KeyCode::Char(key @ ('s' | 'x' | 'r')) if app.p2pool_status_tab == 4 => {
                 let action = match key {
                     's' => ServiceAction::Start,
                     'x' => ServiceAction::Stop,
@@ -727,6 +731,18 @@ port = 46884
     }
 
     #[test]
+    fn dispatch_key_q_is_typed_while_file_explorer_search_is_active() {
+        let mut app = App::new();
+        app.current_screen = CurrentScreen::FileExplorer;
+        app.explorer.search_query = Some(String::new());
+
+        let outcome = dispatch_key(press(KeyCode::Char('q')), &mut app);
+
+        assert!(matches!(outcome, KeyOutcome::Action(AppAction::None)));
+        assert_eq!(app.explorer.search_query.as_deref(), Some("q"));
+    }
+
+    #[test]
     fn dispatch_key_bitcoin_status_left_decrements_above_zero() {
         let mut app = App::new();
         app.current_screen = CurrentScreen::BitcoinStatus;
@@ -830,7 +846,7 @@ port = 46884
     fn dispatch_key_p2pool_system_tab_without_config_ignores_service_controls() {
         let mut app = App::new();
         app.current_screen = CurrentScreen::P2PoolStatus;
-        app.p2pool_status_tab = 3;
+        app.p2pool_status_tab = 4;
 
         assert!(matches!(
             dispatch_key(press(KeyCode::Char('s')), &mut app),
@@ -855,6 +871,20 @@ port = 46884
         app.p2pool_conf_path =
             Some(std::path::PathBuf::from(home).join(".config/p2poolv2/config-signet.toml"));
 
+        assert!(matches!(
+            dispatch_key(press(KeyCode::Char('s')), &mut app),
+            KeyOutcome::Action(AppAction::None)
+        ));
+        assert!(matches!(
+            dispatch_key(press(KeyCode::Char('x')), &mut app),
+            KeyOutcome::Action(AppAction::None)
+        ));
+        assert!(matches!(
+            dispatch_key(press(KeyCode::Char('r')), &mut app),
+            KeyOutcome::Action(AppAction::None)
+        ));
+
+        app.p2pool_status_tab = 4;
         assert!(matches!(
             dispatch_key(press(KeyCode::Char('s')), &mut app),
             KeyOutcome::Action(AppAction::P2PoolService(ServiceAction::Start))
@@ -1085,6 +1115,18 @@ port = 46884
         assert_eq!(app.current_screen, CurrentScreen::BitcoinStatus);
     }
 
+    #[test]
+    fn none_action_leaves_app_state_unchanged() {
+        let mut app = App::new();
+        app.current_screen = CurrentScreen::Settings;
+        app.sidebar_index = 4;
+
+        run(AppAction::None, &mut app);
+
+        assert_eq!(app.current_screen, CurrentScreen::Settings);
+        assert_eq!(app.sidebar_index, 4);
+    }
+
     // --- Settings handle_action tests ---
 
     #[test]
@@ -1098,6 +1140,21 @@ port = 46884
         assert!(flow.is_continue());
         assert_eq!(app.current_screen, CurrentScreen::FileExplorer);
         assert_eq!(app.explorer_trigger, Some(ExplorerTrigger::Settings(1)));
+    }
+
+    #[test]
+    fn open_config_explorer_resets_directory_selection_mode() {
+        let mut app = App::new();
+        app.explorer.allow_dir_select = true;
+
+        run(
+            AppAction::OpenExplorer(ExplorerTrigger::P2PoolConfig),
+            &mut app,
+        );
+
+        assert!(!app.explorer.allow_dir_select);
+        assert_eq!(app.current_screen, CurrentScreen::FileExplorer);
+        assert_eq!(app.explorer_trigger, Some(ExplorerTrigger::P2PoolConfig));
     }
 
     #[test]
@@ -1182,6 +1239,32 @@ port = 46884
         assert_eq!(app.current_screen, CurrentScreen::Settings);
     }
 
+    #[test]
+    #[serial]
+    fn file_selected_for_settings_config_reports_settings_save_failure() {
+        let settings_root = tempfile::tempdir().unwrap();
+        redirect_saves_to(&settings_root);
+        let config_path = settings_root.path().join("p2pool.toml");
+        write_valid_p2pool_toml(&config_path);
+        let blocked_settings_dir = settings_root.path().join("not-a-directory");
+        std::fs::write(&blocked_settings_dir, "file").unwrap();
+
+        let mut app = App::new();
+        app.settings.settings_dir_override = Some(blocked_settings_dir);
+        app.explorer_trigger = Some(ExplorerTrigger::Settings(0));
+
+        run(AppAction::FileSelected(config_path.clone()), &mut app);
+
+        assert_eq!(app.settings.p2pool_conf_path, Some(config_path.clone()));
+        assert_eq!(app.p2pool_conf_path, Some(config_path));
+        assert!(
+            app.settings_view
+                .save_error
+                .as_deref()
+                .is_some_and(|error| error.starts_with("Save failed:"))
+        );
+    }
+
     #[tokio::test]
     #[serial]
     async fn file_selected_p2pool_config_updates_api_client_from_api_section() {
@@ -1237,6 +1320,25 @@ port = 46884
         assert!(app.settings.p2pool_conf_path.is_none());
         assert!(app.settings.settings_dir_override.is_none());
         assert_eq!(app.current_screen, CurrentScreen::Settings);
+    }
+
+    #[test]
+    fn file_selected_without_explorer_trigger_does_not_change_app_state() {
+        let mut app = App::new();
+        app.current_screen = CurrentScreen::Settings;
+        app.settings.settings_dir_override = Some(std::path::PathBuf::from("/tmp/settings"));
+
+        run(
+            AppAction::FileSelected(std::path::PathBuf::from("/tmp/selected")),
+            &mut app,
+        );
+
+        assert_eq!(app.current_screen, CurrentScreen::Settings);
+        assert!(app.explorer_trigger.is_none());
+        assert_eq!(
+            app.settings.settings_dir_override,
+            Some(std::path::PathBuf::from("/tmp/settings"))
+        );
     }
 
     #[test]
@@ -1368,6 +1470,31 @@ port = 46884
     }
 
     #[test]
+    #[serial]
+    fn clear_settings_field_reports_settings_save_failure() {
+        let settings_root = tempfile::tempdir().unwrap();
+        redirect_saves_to(&settings_root);
+        let blocked_settings_dir = settings_root.path().join("not-a-directory");
+        std::fs::write(&blocked_settings_dir, "file").unwrap();
+
+        let mut app = App::new();
+        app.settings.p2pool_conf_path = Some(std::path::PathBuf::from("/tmp/p2pool.toml"));
+        app.settings.settings_dir_override = Some(blocked_settings_dir);
+        app.p2pool_conf_path = app.settings.p2pool_conf_path.clone();
+
+        run(AppAction::ClearSettingsField(0), &mut app);
+
+        assert!(app.settings.p2pool_conf_path.is_none());
+        assert!(app.p2pool_conf_path.is_none());
+        assert!(
+            app.settings_view
+                .save_error
+                .as_deref()
+                .is_some_and(|error| error.starts_with("Save failed:"))
+        );
+    }
+
+    #[test]
     fn commit_p2pool_edit_success_clears_warning() {
         let mut app = App::new();
 
@@ -1404,6 +1531,22 @@ port = 46884
         );
 
         assert!(app.p2pool_config_view.warning_message.is_some());
+    }
+
+    #[test]
+    fn commit_p2pool_edit_without_config_preserves_warning() {
+        let mut app = App::new();
+        app.p2pool_config_view.warning_message = Some("previous warning".to_string());
+
+        run(
+            AppAction::CommitP2PoolEdit(0, "new value".to_string()),
+            &mut app,
+        );
+
+        assert_eq!(
+            app.p2pool_config_view.warning_message.as_deref(),
+            Some("previous warning")
+        );
     }
 
     #[test]
@@ -1445,6 +1588,35 @@ port = 46884
     }
 
     #[test]
+    fn save_p2pool_config_without_path_or_config_preserves_messages() {
+        let mut app = App::new();
+        app.p2pool_config_view.save_message = Some("previous success".to_string());
+        app.p2pool_config_view.warning_message = Some("previous warning".to_string());
+
+        run(AppAction::SaveP2PoolConfig, &mut app);
+
+        assert_eq!(
+            app.p2pool_config_view.save_message.as_deref(),
+            Some("previous success")
+        );
+        assert_eq!(
+            app.p2pool_config_view.warning_message.as_deref(),
+            Some("previous warning")
+        );
+    }
+
+    #[test]
+    fn p2pool_service_action_without_managed_config_clears_stale_error() {
+        let mut app = App::new();
+        app.p2pool_conf_path = Some(std::path::PathBuf::from("/tmp/p2pool.toml"));
+        app.p2pool_service_error = Some("previous failure".to_string());
+
+        run(AppAction::P2PoolService(ServiceAction::Start), &mut app);
+
+        assert!(app.p2pool_service_error.is_none());
+    }
+
+    #[test]
     fn typed_toml_item_like_integer_success() {
         let existing = toml_edit::value(3333);
         let updated = typed_toml_item_like(&existing, "4444").unwrap();
@@ -1479,6 +1651,87 @@ port = 46884
 
         let existing = toml_edit::value(1);
         assert!(typed_toml_item_like(&existing, "abc").is_err());
+    }
+
+    #[test]
+    fn typed_toml_item_like_array_trims_and_omits_empty_values() {
+        let document = "values = [\"old\"]"
+            .parse::<toml_edit::DocumentMut>()
+            .unwrap();
+
+        let updated = typed_toml_item_like(&document["values"], " first, ,second ").unwrap();
+        let values = updated
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|value| value.as_str().unwrap())
+            .collect::<Vec<_>>();
+
+        assert_eq!(values, vec!["first", "second"]);
+    }
+
+    #[test]
+    fn typed_toml_item_like_unsupported_type_returns_error() {
+        let document = "[section]\nkey = \"value\""
+            .parse::<toml_edit::DocumentMut>()
+            .unwrap();
+
+        let error = typed_toml_item_like(&document["section"], "replacement").unwrap_err();
+
+        assert!(error.to_string().contains("Unsupported TOML value type"));
+    }
+
+    #[test]
+    fn save_p2pool_config_skips_fields_with_incompatible_existing_types() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("p2pool.toml");
+        write_valid_p2pool_toml(&file);
+        let config = P2PoolConfig::load(file.to_str().unwrap()).unwrap();
+
+        let content = std::fs::read_to_string(&file).unwrap();
+        let mut document = content.parse::<toml_edit::DocumentMut>().unwrap();
+        document["network"]["listen_address"] = toml_edit::value(123);
+        std::fs::write(&file, document.to_string()).unwrap();
+
+        save_p2pool_config(&file, &config).unwrap();
+
+        let saved = std::fs::read_to_string(file).unwrap();
+        let saved_document = saved.parse::<toml_edit::DocumentMut>().unwrap();
+        assert_eq!(
+            saved_document["network"]["listen_address"].as_integer(),
+            Some(123)
+        );
+        assert_eq!(saved_document["stratum"]["port"].as_integer(), Some(3333));
+    }
+
+    #[test]
+    fn save_p2pool_config_does_not_add_omitted_sections_or_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("p2pool.toml");
+        write_valid_p2pool_toml(&file);
+        let config = P2PoolConfig::load(file.to_str().unwrap()).unwrap();
+
+        let content = std::fs::read_to_string(&file).unwrap();
+        let mut document = content.parse::<toml_edit::DocumentMut>().unwrap();
+        document.as_table_mut().remove("logging");
+        document["network"]
+            .as_table_mut()
+            .unwrap()
+            .remove("dial_peers");
+        std::fs::write(&file, document.to_string()).unwrap();
+
+        save_p2pool_config(&file, &config).unwrap();
+
+        let saved = std::fs::read_to_string(file).unwrap();
+        let saved_document = saved.parse::<toml_edit::DocumentMut>().unwrap();
+        assert!(!saved_document.contains_key("logging"));
+        assert!(
+            !saved_document["network"]
+                .as_table()
+                .unwrap()
+                .contains_key("dial_peers")
+        );
+        assert_eq!(saved_document["stratum"]["port"].as_integer(), Some(3333));
     }
 
     #[test]
@@ -1521,6 +1774,33 @@ port = 46884
         assert!(app.p2pool_config_view.warning_message.is_some());
         assert!(app.p2pool_conf_path.is_none());
         assert!(app.p2pool_config.is_none());
+    }
+
+    #[test]
+    #[serial]
+    fn file_selected_p2pool_config_reports_settings_save_failure() {
+        let settings_root = tempfile::tempdir().unwrap();
+        redirect_saves_to(&settings_root);
+        let config_path = settings_root.path().join("p2pool.toml");
+        write_valid_p2pool_toml(&config_path);
+        let blocked_settings_dir = settings_root.path().join("not-a-directory");
+        std::fs::write(&blocked_settings_dir, "file").unwrap();
+
+        let mut app = App::new();
+        app.settings.settings_dir_override = Some(blocked_settings_dir);
+        app.explorer_trigger = Some(ExplorerTrigger::P2PoolConfig);
+
+        run(AppAction::FileSelected(config_path.clone()), &mut app);
+
+        assert_eq!(app.current_screen, CurrentScreen::P2PoolConfig);
+        assert_eq!(app.p2pool_conf_path, Some(config_path.clone()));
+        assert_eq!(app.settings.p2pool_conf_path, Some(config_path));
+        assert!(
+            app.settings_view
+                .save_error
+                .as_deref()
+                .is_some_and(|error| error.starts_with("Save failed:"))
+        );
     }
 
     #[test]

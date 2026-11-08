@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 use crate::app::{App, P2POOL_STATUS_TABS};
-use crate::systemd::instance_from_config_path;
+use crate::systemd::{format_size_bytes, instance_from_config_path};
 use crate::theme;
 use ratatui::{
     prelude::*,
@@ -51,7 +51,8 @@ impl P2PoolStatusView {
             0 => Self::render_chain_info(f, app, outer[1]),
             1 => Self::render_share_info(f, app, outer[1]),
             2 => Self::render_peer_info(f, app, outer[1]),
-            3 => Self::render_system_info(f, app, outer[1]),
+            3 => Self::render_storage_info(f, app, outer[1]),
+            4 => Self::render_system_info(f, app, outer[1]),
             _ => {}
         }
     }
@@ -200,6 +201,66 @@ impl P2PoolStatusView {
         f.render_widget(paragraph, area);
     }
 
+    fn render_storage_info(f: &mut Frame, app: &App, area: Rect) {
+        let mut text = vec![
+            Line::from(Span::styled(
+                "P2Poolv2 Storage",
+                Style::default().add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+        ];
+
+        if let Some(status) = &app.p2pool_storage_status {
+            if let Some(error) = &status.error {
+                text.push(Line::from(Span::styled(
+                    format!("Storage unavailable: {error}"),
+                    Style::default().fg(Color::Red),
+                )));
+            } else if let Some(path) = &status.path {
+                text.push(Line::from(format!("Store path      : {}", path.display())));
+                text.push(Line::from(""));
+                text.push(Line::from(format!(
+                    "Store size      : {}",
+                    status
+                        .size
+                        .map(format_size_bytes)
+                        .unwrap_or_else(|| "Store not created yet".to_string())
+                )));
+            } else {
+                text.push(Line::from(Span::styled(
+                    "Store path      : unavailable",
+                    Style::default().fg(Color::DarkGray),
+                )));
+                text.push(Line::from(""));
+                text.push(Line::from(Span::styled(
+                    "Store size      : unavailable",
+                    Style::default().fg(Color::DarkGray),
+                )));
+            }
+        } else if app.p2pool_config.is_none() {
+            text.push(Line::from(Span::styled(
+                "Store path      : unavailable",
+                Style::default().fg(Color::DarkGray),
+            )));
+            text.push(Line::from(""));
+            text.push(Line::from(Span::styled(
+                "Store size      : unavailable",
+                Style::default().fg(Color::DarkGray),
+            )));
+        } else {
+            text.push(Line::from(Span::styled(
+                "Loading storage info...",
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
+
+        let paragraph = Paragraph::new(text)
+            .block(Block::default().borders(Borders::ALL).title(" Storage "))
+            .wrap(Wrap { trim: true });
+
+        f.render_widget(paragraph, area);
+    }
+
     fn render_system_info(f: &mut Frame, app: &App, area: Rect) {
         if let Some(error) = &app.p2pool_service_error {
             let paragraph = Paragraph::new(vec![
@@ -226,9 +287,15 @@ impl P2PoolStatusView {
                 None => Span::styled("Unknown", theme::MUTED),
             };
 
+            let rss_str = app
+                .p2pool_rss_bytes
+                .map(format_size_bytes)
+                .unwrap_or_else(|| "unavailable".to_string());
+
             vec![
                 Line::from(format!("Instance       : {instance}")),
                 Line::from(vec![Span::raw("Service Status : "), status]),
+                Line::from(format!("Memory (RSS)   : {rss_str}")),
                 Line::from(""),
                 Line::from("[s] Start    [x] Stop    [r] Restart"),
             ]
@@ -484,6 +551,7 @@ impl Default for P2PoolStatusView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::P2PoolStorageStatus;
     use crate::components::p2pool_client::{
         ChainInfo, PeerInfo, ShareInfo, SharesResponse, UncleInfo,
     };
@@ -493,7 +561,8 @@ mod tests {
 
     const SHARE_TAB: usize = 1;
     const PEER_TAB: usize = 2;
-    const SYSTEM_TAB: usize = 3;
+    const STORAGE_TAB: usize = 3;
+    const SYSTEM_TAB: usize = 4;
 
     fn render_view(app: &App) -> String {
         let backend = TestBackend::new(100, 25);
@@ -578,6 +647,23 @@ mod tests {
     }
 
     #[test]
+    fn render_chain_info_shows_loading_when_configured_without_result() {
+        let mut app = App::new();
+        app.set_p2pool_config(
+            p2poolv2_config::Config::load(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/p2pool.toml"
+            ))
+            .unwrap(),
+        );
+
+        let output = render_view(&app);
+
+        assert!(output.contains("Loading chain info..."));
+        assert!(!output.contains("Select a P2Poolv2 config file"));
+    }
+
+    #[test]
     fn render_dispatches_share_info_for_tab_one() {
         let mut app = App::new();
         app.p2pool_status_tab = SHARE_TAB;
@@ -586,6 +672,28 @@ mod tests {
 
         assert!(output.contains("Difficulty"));
         assert!(output.contains("Uncles"));
+    }
+
+    #[test]
+    fn render_share_info_shows_waiting_when_configured_without_data() {
+        let mut app = App::new();
+        app.p2pool_status_tab = SHARE_TAB;
+        app.set_p2pool_config(
+            p2poolv2_config::Config::load(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/p2pool.toml"
+            ))
+            .unwrap(),
+        );
+
+        let output = render_view(&app);
+
+        assert_eq!(
+            P2PoolStatusView::share_empty_message(&app),
+            "Waiting for share data..."
+        );
+        assert!(output.contains("Waiting"));
+        assert!(!output.contains("Select a P2Poolv2 config file"));
     }
 
     #[test]
@@ -654,6 +762,99 @@ mod tests {
         let output = render_view(&app);
 
         assert!(output.contains("Select a P2Poolv2 config file"));
+    }
+
+    #[test]
+    fn render_dispatches_storage_tab_and_shows_storage_header() {
+        let mut app = App::new();
+        app.p2pool_status_tab = STORAGE_TAB;
+
+        let output = render_view(&app);
+
+        assert!(output.contains("P2Poolv2 Storage"));
+        assert!(output.contains("Store path"));
+        assert!(output.contains("Store size"));
+    }
+
+    #[test]
+    fn render_storage_info_shows_calculated_path_and_size() {
+        let mut app = App::new();
+        app.p2pool_status_tab = STORAGE_TAB;
+        app.p2pool_storage_status = Some(P2PoolStorageStatus {
+            path: Some("data/store.db".into()),
+            size: Some(1024),
+            error: None,
+        });
+
+        let output = render_view(&app);
+
+        assert!(output.contains("Store path      : data/store.db"));
+        assert!(output.contains("Store size      : 1.00 KB"));
+    }
+
+    #[test]
+    fn render_storage_info_reports_store_not_created() {
+        let mut app = App::new();
+        app.p2pool_status_tab = STORAGE_TAB;
+        app.p2pool_storage_status = Some(P2PoolStorageStatus {
+            path: Some("data/store.db".into()),
+            size: None,
+            error: None,
+        });
+
+        let output = render_view(&app);
+
+        assert!(output.contains("Store size      : Store not created yet"));
+    }
+
+    #[test]
+    fn render_storage_info_shows_error_without_stale_path() {
+        let mut app = App::new();
+        app.p2pool_status_tab = STORAGE_TAB;
+        app.p2pool_storage_status = Some(P2PoolStorageStatus {
+            path: None,
+            size: None,
+            error: Some("permission denied".to_string()),
+        });
+
+        let output = render_view(&app);
+
+        assert!(output.contains("Storage unavailable: permission denied"));
+        assert!(!output.contains("Store size      :"));
+    }
+
+    #[test]
+    fn render_storage_info_shows_unavailable_status_without_path() {
+        let mut app = App::new();
+        app.p2pool_status_tab = STORAGE_TAB;
+        app.p2pool_storage_status = Some(P2PoolStorageStatus {
+            path: None,
+            size: None,
+            error: None,
+        });
+
+        let output = render_view(&app);
+
+        assert!(output.contains("Store path      : unavailable"));
+        assert!(output.contains("Store size      : unavailable"));
+    }
+
+    #[test]
+    fn render_storage_info_shows_loading_when_configured_without_result() {
+        let mut app = App::new();
+        app.p2pool_status_tab = STORAGE_TAB;
+        app.set_p2pool_config(
+            p2poolv2_config::Config::load(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/p2pool.toml"
+            ))
+            .unwrap(),
+        );
+
+        let output = render_view(&app);
+
+        assert!(output.contains("Loading storage info..."));
+        assert!(!output.contains("Store path      : unavailable"));
     }
 
     #[test]
@@ -971,5 +1172,38 @@ mod tests {
             P2PoolStatusView::format_timestamp(1_700_000_000_000),
             "11/14/2023, 10:13:20 PM"
         );
+    }
+
+    #[test]
+    fn civil_from_days_handles_negative_era_leap_day() {
+        assert_eq!(P2PoolStatusView::civil_from_days(-719_469), (0, 2, 29));
+    }
+
+    #[test]
+    fn render_system_tab_shows_memory_rss_when_available() {
+        let mut app = App::new();
+        app.p2pool_status_tab = SYSTEM_TAB;
+        let config_dir = user_p2pool_config_dir().unwrap();
+        app.p2pool_conf_path = Some(config_dir.join("config-signet.toml"));
+        app.p2pool_rss_bytes = Some(157_286_400);
+
+        let output = render_view(&app);
+
+        assert!(output.contains("Instance       : signet"));
+        assert!(output.contains("Memory (RSS)   : 150.00 MB"));
+    }
+
+    #[test]
+    fn render_system_tab_shows_memory_rss_unavailable_when_none() {
+        let mut app = App::new();
+        app.p2pool_status_tab = SYSTEM_TAB;
+        let config_dir = user_p2pool_config_dir().unwrap();
+        app.p2pool_conf_path = Some(config_dir.join("config-signet.toml"));
+        app.p2pool_rss_bytes = None;
+
+        let output = render_view(&app);
+
+        assert!(output.contains("Instance       : signet"));
+        assert!(output.contains("Memory (RSS)   : unavailable"));
     }
 }
