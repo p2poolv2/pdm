@@ -209,8 +209,8 @@ dependencies = [
 
 [[package]]
 name = "bitcoindrpc"
-version = "0.16.2"
-source = "git+https://github.com/p2poolv2/p2poolv2#7ff2dc8643b1b3d826997cc402bd906d4314b76e"
+version = "0.16.3"
+source = "git+https://github.com/p2poolv2/p2poolv2#3d84f695e76f1116df5e33e2a527da7cf54e0878"
 dependencies = [
  "base64 0.23.1",
  "bitcoin",
@@ -1631,8 +1631,8 @@ dependencies = [
 
 [[package]]
 name = "p2poolv2_config"
-version = "0.16.2"
-source = "git+https://github.com/p2poolv2/p2poolv2#7ff2dc8643b1b3d826997cc402bd906d4314b76e"
+version = "0.16.3"
+source = "git+https://github.com/p2poolv2/p2poolv2#3d84f695e76f1116df5e33e2a527da7cf54e0878"
 dependencies = [
  "bitcoin",
  "bitcoindrpc",
@@ -1643,8 +1643,8 @@ dependencies = [
 
 [[package]]
 name = "p2poolv2_wallet"
-version = "0.16.2"
-source = "git+https://github.com/p2poolv2/p2poolv2#7ff2dc8643b1b3d826997cc402bd906d4314b76e"
+version = "0.16.3"
+source = "git+https://github.com/p2poolv2/p2poolv2#3d84f695e76f1116df5e33e2a527da7cf54e0878"
 dependencies = [
  "bitcoin",
  "serde",
@@ -1996,6 +1996,8 @@ version = "0.8.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e058c7de0b26af77780c769414d6257830bb240f3c38477dbc2c16e5f54d6d4c"
 dependencies = [
+ "libc",
+ "rand_chacha 0.3.1",
  "rand_core 0.6.4",
 ]
 
@@ -2005,7 +2007,7 @@ version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9ef1d0d795eb7d84685bca4f72f3649f064e6641543d3a8c415898726a57b41"
 dependencies = [
- "rand_chacha",
+ "rand_chacha 0.9.0",
  "rand_core 0.9.5",
 ]
 
@@ -2018,6 +2020,16 @@ dependencies = [
  "chacha20",
  "getrandom 0.4.3",
  "rand_core 0.10.1",
+]
+
+[[package]]
+name = "rand_chacha"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e6c10a63a0fa32252be49d21e7709d4d4baf8d231c2dbce1eaa8141b9b127d88"
+dependencies = [
+ "ppv-lite86",
+ "rand_core 0.6.4",
 ]
 
 [[package]]
@@ -2035,6 +2047,9 @@ name = "rand_core"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
+dependencies = [
+ "getrandom 0.2.17",
+]
 
 [[package]]
 name = "rand_core"
@@ -2799,7 +2814,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
