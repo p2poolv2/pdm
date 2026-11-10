@@ -227,6 +227,15 @@ fn dispatch_key(key: event::KeyEvent, app: &mut App) -> KeyOutcome {
 /// Pre-populate app state from `app.settings`. Called once at startup after
 /// settings have been loaded into `app.settings = load_settings()`.
 fn bootstrap_from_settings(app: &mut App) {
+    bootstrap_from_settings_with_writer(app, |cfg| {
+        prometheus::write_prometheus_config(cfg).map(|_| ())
+    });
+}
+
+fn bootstrap_from_settings_with_writer(
+    app: &mut App,
+    mut write_prometheus_config: impl FnMut(&P2PoolConfig) -> Result<()>,
+) {
     // P2Pool config — only set the path when the config is actually loadable
     if let Some(path) = &app.settings.p2pool_conf_path.clone()
         && let Some(p) = path.to_str()
@@ -234,7 +243,7 @@ fn bootstrap_from_settings(app: &mut App) {
         match P2PoolConfig::load(p) {
             Ok(cfg) => {
                 app.p2pool_conf_path = Some(path.clone());
-                if let Err(e) = prometheus::write_prometheus_config(&cfg) {
+                if let Err(e) = write_prometheus_config(&cfg) {
                     eprintln!("pdm: failed to generate Prometheus config on startup: {e}");
                 }
 
@@ -249,8 +258,19 @@ fn bootstrap_from_settings(app: &mut App) {
 }
 
 // Logic Handler
-#[allow(clippy::too_many_lines)] // Central dispatch; splitting would obscure the flow
+#[allow(clippy::too_many_lines)]
 fn handle_action(action: AppAction, app: &mut App) -> Result<ControlFlow<()>> {
+    handle_action_with_prometheus_writer(action, app, |cfg| {
+        prometheus::write_prometheus_config(cfg).map(|_| ())
+    })
+}
+
+#[allow(clippy::too_many_lines)]
+fn handle_action_with_prometheus_writer(
+    action: AppAction,
+    app: &mut App,
+    mut write_prometheus_config: impl FnMut(&P2PoolConfig) -> Result<()>,
+) -> Result<ControlFlow<()>> {
     match action {
         AppAction::Quit => return Ok(ControlFlow::Break(())),
 
@@ -409,7 +429,7 @@ fn handle_action(action: AppAction, app: &mut App) -> Result<ControlFlow<()>> {
                         app.p2pool_config_view.save_message =
                             Some("Configuration correctly saved".to_string());
 
-                        if let Err(e) = prometheus::write_prometheus_config(cfg) {
+                        if let Err(e) = write_prometheus_config(cfg) {
                             app.p2pool_config_view.warning_message = Some(format!(
                                 "P2Pool config saved, but Prometheus config generation failed: {e}"
                             ));
@@ -1165,13 +1185,38 @@ port = 46884
         let dir = tempdir().unwrap();
         let path = dir.path().join("p2pool.toml");
         write_valid_p2pool_toml(&path);
+        let prometheus_path = dir.path().join("prometheus.yml");
 
         let mut app = App::new();
         app.settings.p2pool_conf_path = Some(path.clone());
 
-        bootstrap_from_settings(&mut app);
+        bootstrap_from_settings_with_writer(&mut app, |cfg| {
+            std::fs::write(&prometheus_path, prometheus::generate_prometheus_yaml(cfg))?;
+            Ok(())
+        });
 
         assert_eq!(app.p2pool_conf_path, Some(path));
+        let prometheus_config = std::fs::read_to_string(prometheus_path).unwrap();
+        assert!(prometheus_config.contains("\"127.0.0.1:46884\""));
+    }
+
+    #[test]
+    fn bootstrap_continues_when_prometheus_config_generation_fails() {
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("p2pool.toml");
+        write_valid_p2pool_toml(&path);
+
+        let mut app = App::new();
+        app.settings.p2pool_conf_path = Some(path.clone());
+
+        bootstrap_from_settings_with_writer(&mut app, |_| {
+            Err(anyhow::anyhow!("test generation failure"))
+        });
+
+        assert_eq!(app.p2pool_conf_path, Some(path));
+        assert!(app.p2pool_config.is_some());
     }
 
     #[test]
@@ -1421,6 +1466,7 @@ port = 46884
     fn save_p2pool_config_action_success_sets_message() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("p2pool.toml");
+        let prometheus_path = dir.path().join("prometheus.yml");
         write_valid_p2pool_toml(&file);
 
         let mut app = App::new();
@@ -1429,12 +1475,50 @@ port = 46884
         app.p2pool_conf_path = Some(file.clone());
         app.set_p2pool_config(cfg);
 
-        run(AppAction::SaveP2PoolConfig, &mut app);
+        let _ =
+            handle_action_with_prometheus_writer(AppAction::SaveP2PoolConfig, &mut app, |cfg| {
+                std::fs::write(&prometheus_path, prometheus::generate_prometheus_yaml(cfg))?;
+                Ok(())
+            })
+            .unwrap();
 
         assert_eq!(
             app.p2pool_config_view.save_message.as_deref(),
             Some("Configuration correctly saved")
         );
+        let prometheus_config = std::fs::read_to_string(prometheus_path).unwrap();
+        assert!(prometheus_config.contains("\"127.0.0.1:46884\""));
+    }
+
+    #[test]
+    fn save_p2pool_config_succeeds_when_prometheus_generation_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("p2pool.toml");
+        write_valid_p2pool_toml(&file);
+
+        let mut app = App::new();
+        let mut cfg = P2PoolConfig::load(file.to_str().unwrap()).unwrap();
+        cfg.api.port = 9999;
+        app.p2pool_conf_path = Some(file.clone());
+        app.set_p2pool_config(cfg);
+
+        let _ = handle_action_with_prometheus_writer(AppAction::SaveP2PoolConfig, &mut app, |_| {
+            Err(anyhow::anyhow!("test generation failure"))
+        })
+        .unwrap();
+
+        assert_eq!(
+            app.p2pool_config_view.save_message.as_deref(),
+            Some("Configuration correctly saved")
+        );
+        assert!(
+            app.p2pool_config_view
+                .warning_message
+                .as_deref()
+                .is_some_and(|warning| warning.contains("Prometheus config generation failed"))
+        );
+        let saved_config = std::fs::read_to_string(file).unwrap();
+        assert!(saved_config.contains("port = 9999"));
     }
 
     #[test]

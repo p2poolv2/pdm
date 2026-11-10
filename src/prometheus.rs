@@ -24,8 +24,10 @@
 
 use anyhow::{Context, Result};
 use p2poolv2_config::Config as P2PoolConfig;
+use std::fmt::Write as FmtWrite;
 use std::io::Write;
-use std::path::PathBuf;
+use std::net::Ipv6Addr;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -52,7 +54,8 @@ pub fn prometheus_yml_path() -> Result<PathBuf> {
 
 /// Produces valid Prometheus YAML for the given P2Poolv2 configuration.
 ///
-/// The generated YAML targets `<cfg.api.hostname>:<cfg.api.port>`.
+/// The generated YAML targets `<cfg.api.hostname>:<cfg.api.port>`, with
+/// IPv6 hostnames bracketed as required by Prometheus target syntax.
 /// If `cfg.api.auth_user` and `cfg.api.auth_password` are both set,
 /// a `basic_auth` block is included.
 ///
@@ -61,7 +64,11 @@ pub fn prometheus_yml_path() -> Result<PathBuf> {
 /// target string is explicitly quoted.
 #[must_use]
 pub fn generate_prometheus_yaml(cfg: &P2PoolConfig) -> String {
-    let target = format!("{}:{}", cfg.api.hostname, cfg.api.port);
+    let target = if cfg.api.hostname.parse::<Ipv6Addr>().is_ok() {
+        format!("[{}]:{}", cfg.api.hostname, cfg.api.port)
+    } else {
+        format!("{}:{}", cfg.api.hostname, cfg.api.port)
+    };
 
     // Resolve optional basic-auth credentials.
     // auth_token is NOT a password; only auth_user + auth_password is
@@ -94,13 +101,31 @@ scrape_configs:
     )
 }
 
-/// Wraps a string value in YAML single quotes, escaping any embedded
-/// single quotes by doubling them (`'` → `''`).
-///
-/// Using single-quoted YAML scalars avoids the need to worry about
-/// backslash escapes; the only special character is `'` itself.
+/// Wraps a string in a YAML double-quoted scalar, escaping special characters.
 fn yaml_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "''"))
+    let mut quoted = String::with_capacity(value.len() + 2);
+    quoted.push('"');
+    for character in value.chars() {
+        match character {
+            '"' => quoted.push_str("\\\""),
+            '\\' => quoted.push_str("\\\\"),
+            '\u{2028}' => quoted.push_str("\\u2028"),
+            '\u{2029}' => quoted.push_str("\\u2029"),
+            character if character.is_control() => {
+                let codepoint = u32::from(character);
+                if codepoint <= 0xff {
+                    write!(quoted, "\\x{codepoint:02X}").expect("writing to a String cannot fail");
+                } else if codepoint <= 0xffff {
+                    write!(quoted, "\\u{codepoint:04X}").expect("writing to a String cannot fail");
+                } else {
+                    write!(quoted, "\\U{codepoint:08X}").expect("writing to a String cannot fail");
+                }
+            }
+            character => quoted.push(character),
+        }
+    }
+    quoted.push('"');
+    quoted
 }
 
 /// Generates `prometheus.yml` from `cfg` and writes it to the
@@ -141,11 +166,22 @@ pub fn write_prometheus_config(cfg: &P2PoolConfig) -> Result<PathBuf> {
             .as_ref()
             .is_some_and(|p| !p.is_empty());
 
+    write_config_atomically(&dir, &out_path, &content, has_credentials)?;
+
+    Ok(out_path)
+}
+
+fn write_config_atomically(
+    dir: &Path,
+    out_path: &Path,
+    content: &str,
+    _has_credentials: bool,
+) -> Result<()> {
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
 
     #[cfg(unix)]
-    if has_credentials {
+    if _has_credentials {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
@@ -169,29 +205,38 @@ pub fn write_prometheus_config(cfg: &P2PoolConfig) -> Result<PathBuf> {
         }
     };
 
-    let result = (|| -> Result<()> {
-        file.write_all(content.as_bytes())?;
-        file.sync_all()?;
-        drop(file);
+    let write_result = file
+        .write_all(content.as_bytes())
+        .and_then(|()| file.sync_all());
+    drop(file);
 
-        std::fs::rename(&tmp_path, &out_path).with_context(|| {
-            format!(
-                "could not rename {} to {}",
-                tmp_path.display(),
-                out_path.display()
-            )
-        })?;
+    let result = write_result
+        .context("could not write temporary Prometheus config")
+        .and_then(|()| {
+            std::fs::rename(&tmp_path, out_path).with_context(|| {
+                format!(
+                    "could not rename {} to {}",
+                    tmp_path.display(),
+                    out_path.display()
+                )
+            })
+        });
 
-        Ok(())
-    })();
-
-    if result.is_err() {
-        let _ = std::fs::remove_file(&tmp_path);
+    if let Err(error) = result {
+        match std::fs::remove_file(&tmp_path) {
+            Ok(()) => {}
+            Err(cleanup_error) if cleanup_error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(cleanup_error) => {
+                return Err(error.context(format!(
+                    "also failed to remove temporary config {}: {cleanup_error}",
+                    tmp_path.display()
+                )));
+            }
+        }
+        return Err(error);
     }
 
-    result?;
-
-    Ok(out_path)
+    Ok(())
 }
 
 #[cfg(test)]
@@ -288,14 +333,21 @@ port = {port}
     fn default_hostname_and_port_appear_in_target() {
         let cfg = make_config_with_api("127.0.0.1", 46884);
         let yaml = generate_prometheus_yaml(&cfg);
-        assert!(yaml.contains("'127.0.0.1:46884'"), "yaml:\n{yaml}");
+        assert!(yaml.contains("\"127.0.0.1:46884\""), "yaml:\n{yaml}");
     }
 
     #[test]
     fn custom_hostname_and_port_appear_in_target() {
         let cfg = make_config_with_api("192.0.2.10", 9090);
         let yaml = generate_prometheus_yaml(&cfg);
-        assert!(yaml.contains("'192.0.2.10:9090'"), "yaml:\n{yaml}");
+        assert!(yaml.contains("\"192.0.2.10:9090\""), "yaml:\n{yaml}");
+    }
+
+    #[test]
+    fn ipv6_hostname_is_bracketed_in_target() {
+        let cfg = make_config_with_api("::1", 46884);
+        let yaml = generate_prometheus_yaml(&cfg);
+        assert!(yaml.contains("\"[::1]:46884\""), "yaml:\n{yaml}");
     }
 
     #[test]
@@ -354,8 +406,8 @@ port = {port}
         let cfg = make_config_with_auth("127.0.0.1", 46884, Some("alice"), Some("s3cr3t"));
         let yaml = generate_prometheus_yaml(&cfg);
         assert!(yaml.contains("basic_auth"), "yaml:\n{yaml}");
-        assert!(yaml.contains("username: 'alice'"), "yaml:\n{yaml}");
-        assert!(yaml.contains("password: 's3cr3t'"), "yaml:\n{yaml}");
+        assert!(yaml.contains("username: \"alice\""), "yaml:\n{yaml}");
+        assert!(yaml.contains("password: \"s3cr3t\""), "yaml:\n{yaml}");
     }
 
     #[test]
@@ -379,9 +431,40 @@ port = {port}
 
     #[test]
     fn yaml_quote_escapes_single_quotes() {
-        assert_eq!(yaml_quote("it's"), "'it''s'");
-        assert_eq!(yaml_quote("plain"), "'plain'");
-        assert_eq!(yaml_quote("a'b'c"), "'a''b''c'");
+        assert_eq!(yaml_quote("it's"), "\"it's\"");
+        assert_eq!(yaml_quote("plain"), "\"plain\"");
+        assert_eq!(yaml_quote("a'b'c"), "\"a'b'c\"");
+    }
+
+    #[test]
+    fn yaml_quote_escapes_quotes_backslashes_and_control_characters() {
+        assert_eq!(
+            yaml_quote("quote\" slash\\ newline\n tab\t control\u{1b}"),
+            "\"quote\\\" slash\\\\ newline\\x0A tab\\x09 control\\x1B\""
+        );
+        assert_eq!(
+            yaml_quote("line\u{2028}separator"),
+            "\"line\\u2028separator\""
+        );
+    }
+
+    #[test]
+    fn credentials_with_control_characters_are_escaped_in_yaml() {
+        let cfg = make_config_with_auth(
+            "127.0.0.1",
+            46884,
+            Some("user\nname"),
+            Some("pass\rword\u{7f}"),
+        );
+        let yaml = generate_prometheus_yaml(&cfg);
+        assert!(
+            yaml.contains("username: \"user\\x0Aname\""),
+            "yaml:\n{yaml}"
+        );
+        assert!(
+            yaml.contains("password: \"pass\\x0Dword\\x7F\""),
+            "yaml:\n{yaml}"
+        );
     }
 
     #[test]
@@ -392,7 +475,7 @@ port = {port}
         cfg.api.hostname = "host'name".to_string();
 
         let yaml = generate_prometheus_yaml(&cfg);
-        assert!(yaml.contains("'host''name:46884'"), "yaml:\n{yaml}");
+        assert!(yaml.contains("\"host'name:46884\""), "yaml:\n{yaml}");
     }
 
     // write_prometheus_config (filesystem)
@@ -423,7 +506,7 @@ port = {port}
         let path = write_prometheus_config(&cfg).unwrap();
 
         let content = std::fs::read_to_string(&path).unwrap();
-        assert!(content.contains("'10.0.0.1:9999'"), "content:\n{content}");
+        assert!(content.contains("\"10.0.0.1:9999\""), "content:\n{content}");
     }
 
     #[test]
@@ -440,7 +523,7 @@ port = {port}
 
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(
-            content.contains("'192.168.1.1:2222'"),
+            content.contains("\"192.168.1.1:2222\""),
             "content:\n{content}"
         );
         assert!(
@@ -522,5 +605,22 @@ port = {port}
         unsafe {
             std::env::remove_var("PDM_CONFIG_DIR");
         }
+    }
+
+    #[test]
+    fn rename_failure_cleans_up_temporary_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let output_path = dir.path().join("prometheus.yml");
+        std::fs::create_dir(&output_path).unwrap();
+        std::fs::write(output_path.join("preserve"), "existing").unwrap();
+
+        let result = write_config_atomically(dir.path(), &output_path, "new config", false);
+
+        assert!(result.is_err());
+        assert_eq!(
+            std::fs::read_to_string(output_path.join("preserve")).unwrap(),
+            "existing"
+        );
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
     }
 }
