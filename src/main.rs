@@ -9,6 +9,7 @@ use pdm::app::{
 };
 use pdm::components::settings_view::{FIELDS, FieldKind};
 use pdm::config::{apply_edit as apply_p2pool_edit, flatten_config};
+use pdm::prometheus;
 use pdm::settings::{load_settings, save_settings};
 use pdm::systemd::{P2PoolV2Service, ServiceAction, instance_from_config_path};
 use pdm::ui;
@@ -233,6 +234,10 @@ fn bootstrap_from_settings(app: &mut App) {
         match P2PoolConfig::load(p) {
             Ok(cfg) => {
                 app.p2pool_conf_path = Some(path.clone());
+                if let Err(e) = prometheus::write_prometheus_config(&cfg) {
+                    eprintln!("pdm: failed to generate Prometheus config on startup: {e}");
+                }
+
                 app.set_p2pool_config(cfg);
             }
             Err(e) => {
@@ -403,6 +408,12 @@ fn handle_action(action: AppAction, app: &mut App) -> Result<ControlFlow<()>> {
                     Ok(()) => {
                         app.p2pool_config_view.save_message =
                             Some("Configuration correctly saved".to_string());
+
+                        if let Err(e) = prometheus::write_prometheus_config(cfg) {
+                            app.p2pool_config_view.warning_message = Some(format!(
+                                "P2Pool config saved, but Prometheus config generation failed: {e}"
+                            ));
+                        }
                     }
                     Err(e) => {
                         app.p2pool_config_view.warning_message =
