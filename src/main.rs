@@ -9,6 +9,8 @@ use pdm::app::{
 };
 use pdm::components::settings_view::{FIELDS, FieldKind};
 use pdm::config::{apply_edit as apply_p2pool_edit, flatten_config};
+use pdm::grafana;
+use pdm::prometheus;
 use pdm::settings::{load_settings, save_settings};
 use pdm::systemd::{P2PoolV2Service, ServiceAction, instance_from_config_path};
 use pdm::ui;
@@ -226,26 +228,60 @@ fn dispatch_key(key: event::KeyEvent, app: &mut App) -> KeyOutcome {
 /// Pre-populate app state from `app.settings`. Called once at startup after
 /// settings have been loaded into `app.settings = load_settings()`.
 fn bootstrap_from_settings(app: &mut App) {
-    // P2Pool config — only set the path when the config is actually loadable
+    bootstrap_from_settings_with_writers(
+        app,
+        |cfg| prometheus::write_prometheus_config(cfg).map(|_| ()),
+        || grafana::write_grafana_provisioning(grafana::DEFAULT_PROMETHEUS_URL).map(|_| ()),
+    );
+}
+
+fn bootstrap_from_settings_with_writers(
+    app: &mut App,
+    mut write_prometheus_config: impl FnMut(&P2PoolConfig) -> Result<()>,
+    mut write_grafana_provisioning: impl FnMut() -> Result<()>,
+) {
     if let Some(path) = &app.settings.p2pool_conf_path.clone()
         && let Some(p) = path.to_str()
     {
         match P2PoolConfig::load(p) {
             Ok(cfg) => {
                 app.p2pool_conf_path = Some(path.clone());
+
+                if let Err(e) = write_prometheus_config(&cfg) {
+                    eprintln!("pdm: failed to generate Prometheus config on startup: {e}");
+                }
+
+                if let Err(e) = write_grafana_provisioning() {
+                    eprintln!("pdm: failed to generate Grafana provisioning on startup: {e}");
+                }
+
                 app.set_p2pool_config(cfg);
             }
             Err(e) => {
                 eprintln!("pdm: failed to load p2pool config on startup: {e}");
-                // Leave both as None so the view prompts the user to re-select
             }
         }
     }
 }
 
 // Logic Handler
-#[allow(clippy::too_many_lines)] // Central dispatch; splitting would obscure the flow
+#[allow(clippy::too_many_lines)]
 fn handle_action(action: AppAction, app: &mut App) -> Result<ControlFlow<()>> {
+    handle_action_with_writers(
+        action,
+        app,
+        |cfg| prometheus::write_prometheus_config(cfg).map(|_| ()),
+        || grafana::write_grafana_provisioning(grafana::DEFAULT_PROMETHEUS_URL).map(|_| ()),
+    )
+}
+
+#[allow(clippy::too_many_lines)]
+fn handle_action_with_writers(
+    action: AppAction,
+    app: &mut App,
+    mut write_prometheus_config: impl FnMut(&P2PoolConfig) -> Result<()>,
+    mut write_grafana_provisioning: impl FnMut() -> Result<()>,
+) -> Result<ControlFlow<()>> {
     match action {
         AppAction::Quit => return Ok(ControlFlow::Break(())),
 
@@ -403,6 +439,24 @@ fn handle_action(action: AppAction, app: &mut App) -> Result<ControlFlow<()>> {
                     Ok(()) => {
                         app.p2pool_config_view.save_message =
                             Some("Configuration correctly saved".to_string());
+
+                        let mut monitoring_errors = Vec::with_capacity(2);
+                        if let Err(e) = write_prometheus_config(cfg) {
+                            monitoring_errors
+                                .push(format!("Prometheus config generation failed: {e}"));
+                        }
+
+                        if let Err(e) = write_grafana_provisioning() {
+                            monitoring_errors
+                                .push(format!("Grafana provisioning generation failed: {e}"));
+                        }
+
+                        if !monitoring_errors.is_empty() {
+                            app.p2pool_config_view.warning_message = Some(format!(
+                                "P2Pool config saved, but {}",
+                                monitoring_errors.join("; ")
+                            ));
+                        }
                     }
                     Err(e) => {
                         app.p2pool_config_view.warning_message =
@@ -1154,13 +1208,78 @@ port = 46884
         let dir = tempdir().unwrap();
         let path = dir.path().join("p2pool.toml");
         write_valid_p2pool_toml(&path);
+        let prometheus_path = dir.path().join("prometheus.yml");
 
         let mut app = App::new();
         app.settings.p2pool_conf_path = Some(path.clone());
 
-        bootstrap_from_settings(&mut app);
+        let mut grafana_called = false;
+        bootstrap_from_settings_with_writers(
+            &mut app,
+            |cfg| {
+                std::fs::write(&prometheus_path, prometheus::generate_prometheus_yaml(cfg))?;
+                Ok(())
+            },
+            || {
+                grafana_called = true;
+                Ok(())
+            },
+        );
 
         assert_eq!(app.p2pool_conf_path, Some(path));
+        let prometheus_config = std::fs::read_to_string(prometheus_path).unwrap();
+        assert!(prometheus_config.contains("\"127.0.0.1:46884\""));
+        assert!(grafana_called);
+    }
+
+    #[test]
+    fn bootstrap_continues_when_prometheus_config_generation_fails() {
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("p2pool.toml");
+        write_valid_p2pool_toml(&path);
+
+        let mut app = App::new();
+        app.settings.p2pool_conf_path = Some(path.clone());
+
+        let mut grafana_called = false;
+        bootstrap_from_settings_with_writers(
+            &mut app,
+            |_| Err(anyhow::anyhow!("test generation failure")),
+            || {
+                grafana_called = true;
+                Ok(())
+            },
+        );
+
+        assert_eq!(app.p2pool_conf_path, Some(path));
+        assert!(app.p2pool_config.is_some());
+        assert!(grafana_called);
+    }
+
+    #[test]
+    fn bootstrap_continues_when_grafana_provisioning_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("p2pool.toml");
+        write_valid_p2pool_toml(&path);
+
+        let mut app = App::new();
+        app.settings.p2pool_conf_path = Some(path.clone());
+        let mut prometheus_called = false;
+
+        bootstrap_from_settings_with_writers(
+            &mut app,
+            |_| {
+                prometheus_called = true;
+                Ok(())
+            },
+            || Err(anyhow::anyhow!("test Grafana failure")),
+        );
+
+        assert_eq!(app.p2pool_conf_path, Some(path));
+        assert!(app.p2pool_config.is_some());
+        assert!(prometheus_called);
     }
 
     #[test]
@@ -1410,6 +1529,7 @@ port = 46884
     fn save_p2pool_config_action_success_sets_message() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("p2pool.toml");
+        let prometheus_path = dir.path().join("prometheus.yml");
         write_valid_p2pool_toml(&file);
 
         let mut app = App::new();
@@ -1418,12 +1538,106 @@ port = 46884
         app.p2pool_conf_path = Some(file.clone());
         app.set_p2pool_config(cfg);
 
-        run(AppAction::SaveP2PoolConfig, &mut app);
+        let mut grafana_called = false;
+        let _ = handle_action_with_writers(
+            AppAction::SaveP2PoolConfig,
+            &mut app,
+            |cfg| {
+                std::fs::write(&prometheus_path, prometheus::generate_prometheus_yaml(cfg))?;
+                Ok(())
+            },
+            || {
+                grafana_called = true;
+                Ok(())
+            },
+        )
+        .unwrap();
 
         assert_eq!(
             app.p2pool_config_view.save_message.as_deref(),
             Some("Configuration correctly saved")
         );
+        let prometheus_config = std::fs::read_to_string(prometheus_path).unwrap();
+        assert!(prometheus_config.contains("\"127.0.0.1:46884\""));
+        assert!(grafana_called);
+    }
+
+    #[test]
+    fn save_p2pool_config_succeeds_when_prometheus_generation_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("p2pool.toml");
+        write_valid_p2pool_toml(&file);
+
+        let mut app = App::new();
+        let mut cfg = P2PoolConfig::load(file.to_str().unwrap()).unwrap();
+        cfg.api.port = 9999;
+        app.p2pool_conf_path = Some(file.clone());
+        app.set_p2pool_config(cfg);
+
+        let mut grafana_called = false;
+        let _ = handle_action_with_writers(
+            AppAction::SaveP2PoolConfig,
+            &mut app,
+            |_| Err(anyhow::anyhow!("test generation failure")),
+            || {
+                grafana_called = true;
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            app.p2pool_config_view.save_message.as_deref(),
+            Some("Configuration correctly saved")
+        );
+        assert!(
+            app.p2pool_config_view
+                .warning_message
+                .as_deref()
+                .is_some_and(|warning| warning.contains("Prometheus config generation failed"))
+        );
+        let saved_config = std::fs::read_to_string(file).unwrap();
+        assert!(saved_config.contains("port = 9999"));
+        assert!(grafana_called);
+    }
+
+    #[test]
+    fn save_p2pool_config_succeeds_when_grafana_provisioning_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("p2pool.toml");
+        write_valid_p2pool_toml(&file);
+
+        let mut app = App::new();
+        let mut cfg = P2PoolConfig::load(file.to_str().unwrap()).unwrap();
+        cfg.api.port = 9999;
+        app.p2pool_conf_path = Some(file.clone());
+        app.set_p2pool_config(cfg);
+        let mut prometheus_called = false;
+
+        let _ = handle_action_with_writers(
+            AppAction::SaveP2PoolConfig,
+            &mut app,
+            |_| {
+                prometheus_called = true;
+                Ok(())
+            },
+            || Err(anyhow::anyhow!("test Grafana failure")),
+        )
+        .unwrap();
+
+        assert_eq!(
+            app.p2pool_config_view.save_message.as_deref(),
+            Some("Configuration correctly saved")
+        );
+        assert!(
+            app.p2pool_config_view
+                .warning_message
+                .as_deref()
+                .is_some_and(|warning| warning.contains("Grafana provisioning generation failed"))
+        );
+        assert!(prometheus_called);
+        let saved_config = std::fs::read_to_string(file).unwrap();
+        assert!(saved_config.contains("port = 9999"));
     }
 
     #[test]
